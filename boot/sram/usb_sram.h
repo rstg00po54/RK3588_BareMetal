@@ -15,7 +15,7 @@ static volatile uint32_t trb4[4] __attribute__((aligned(16)));
 static volatile unsigned char setup4[64] __attribute__((aligned(64)));
 static volatile unsigned char data4[64] __attribute__((aligned(64)));
 static unsigned cursor4, phase4, config4, live4, status_ep4, three4;
-static unsigned setups4, resets4, connects4;
+static unsigned setups4, resets4, connects4, stalls4;
 /* Once we touch the inherited device, require a confirmed halt before a jump. */
 static unsigned usb_owned;
 /* Development-only USB control on a trusted physical connection.
@@ -315,7 +315,13 @@ static int handle4(void) {
         three4 = 0;
         return 1;
     }
-    out("[USB4] unsupported request; STALL\n");
+    ++stalls4;
+    if(stalls4<=8 || usb_trace){
+        out("[USB4] unsupported setup; STALL: ");
+        usb_hex(bm,2);usb_put(' ');usb_hex(req,2);usb_put(' ');
+        usb_hex(v,4);usb_put(' ');usb_hex(idx,4);usb_put(' ');
+        usb_hex(len,4);usb_put('\n');
+    }else if(stalls4==9)out("[USB4] further STALL logs suppressed; usbtrace to inspect\n");
     return reject4();
 }
 
@@ -500,7 +506,7 @@ static void usbstart4(void) {
         ring4[i] = 0;
     cursor4 = 0;
     config4 = 0;config_reported=0;
-    setups4 = resets4 = connects4 = 0;
+    setups4 = resets4 = connects4 = stalls4 = 0;
     uint64_t a = (uintptr_t)ring4;
     wr4(0xc400, (uint32_t)a);
     wr4(0xc404, (uint32_t)(a >> 32));
@@ -528,6 +534,7 @@ static void usbstat4(void) {
     usb_val("setups", setups4, 8);
     usb_val("resets", resets4, 8);
     usb_val("connects", connects4, 8);
+    usb_val("stalls", stalls4, 8);
     usb_val("event cursor", cursor4, 2);
     if(usb_owned)usb_handoff_regs4();
     upload_status4();
