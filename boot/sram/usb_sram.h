@@ -18,27 +18,28 @@ static unsigned cursor4, phase4, config4, live4, status_ep4, three4;
 static unsigned setups4, resets4, connects4;
 /* Once we touch the inherited device, require a confirmed halt before a jump. */
 static unsigned usb_owned;
-/* USB upload must be armed by local UART. A verified image is never
- * auto-executed. Only the inactive 64 KiB SRAM slot is writable. */
+/* Development-only USB control on a trusted physical connection.
+ * Only the inactive 64 KiB SRAM slot is writable. Explicit RUN required. */
 static unsigned upload_arm,upload_state,upload_size,upload_done;
 static uint32_t upload_crc;
 static unsigned upload_pending,upload_offset,upload_len;
-static unsigned config_reported;
+static unsigned config_reported,usb_trace,remote_enabled=1,remote_run;
+#define SRAM_USB_API 2U
 static uint32_t crc_byte(uint32_t crc,unsigned c);
 static void upload_abort4(void){
     if(upload_arm || upload_state==1 || upload_pending==0x54){
         loaded=0;
         upload_state=0;
     }
-    upload_arm=0;upload_pending=0;
+    upload_arm=0;upload_pending=0;remote_run=0;
 }
-static void upload_arm4(void){
+static int upload_arm4(void){
     if(!live4 || !config4 || !alternate() || (SYS(SCTLR_EL3)&5)){
-        out("[UPLOAD] USB not configured or unsafe slot\n");return;
+        out("[UPLOAD] USB not configured or unsafe slot\n");return 0;
     }
     loaded=0;upload_state=0;upload_size=upload_done=0;upload_crc=0;
     upload_pending=0;upload_arm=1;
-    out("[UPLOAD] armed; host may stage one image\n");
+    out("[UPLOAD] armed; host may stage one image\n");return 1;
 }
 static void upload_status4(void){
     val("[UPLOAD] armed = ",upload_arm);
@@ -191,6 +192,23 @@ static int handle4(void) {
     unsigned bm = setup4[0], req = setup4[1], v = setup4[2] | (setup4[3] << 8),
              idx = setup4[4] | (setup4[5] << 8), len = setup4[6] | (setup4[7] << 8);
     ++setups4;
+    /* API/version, active slot, alternate slot and remote-enable flag. */
+    if(bm==0xc0 && req==0x58 && !v && !idx && len && config4){
+        unsigned char info[16];
+        uint32_t words[4]={SRAM_USB_API,(uint32_t)(uintptr_t)_start,(uint32_t)alternate(),remote_enabled};
+        for(unsigned j=0;j<4;++j)for(unsigned i=0;i<4;++i)
+            info[j*4+i]=(unsigned char)(words[j]>>(8*i));
+        return reply4(info,sizeof(info),len,0);
+    }
+    if(bm==0x40 && config4 && remote_enabled && !v && !idx && !len){
+        if(req==0x56 && upload_arm4()){
+            phase4=3;status_ep4=1;three4=0;return 1;
+        }
+        if(req==0x57 && loaded && loaded==alternate() && upload_state==2 &&
+           upload_size==upload_done && !(SYS(SCTLR_EL3)&5)){
+            upload_pending=0x57;phase4=3;status_ep4=1;three4=0;return 1;
+        }
+    }
     /* SRAM upload requests: 0x52 header, 0x53 sequential <=64B,
      * 0x54 verify, 0x55 read-only status. USB wire data uses little endian.
      * No host-chosen pointer, no writes to running slot, no remote run. */
@@ -220,7 +238,8 @@ static int handle4(void) {
         static const unsigned char pong[]={ 'S','R','A','M','U','S','B','1' };
         return reply4(pong,sizeof(pong),len,0);
     }
-    /* Print concise request trace; UART is 1.5 Mbaud. */
+    /* Optional trace; keep normal enumeration quiet. */
+    if(usb_trace){
     out("[SETUP] ");
     usb_hex(bm, 2);
     usb_put(' ');
@@ -232,6 +251,7 @@ static int handle4(void) {
     usb_put(' ');
     usb_hex(len, 4);
     usb_put('\n');
+    }
     if (bm == 0x80 && req == 6 && (v & 255) == 0 && idx == 0 && len) {
         switch (v >> 8) {
         case 1: return reply4(dev4, sizeof(dev4), len, 0);
@@ -349,6 +369,10 @@ static void poll4(void) {
                     }
                     if(config4 && !config_reported){
                         config_reported=1;out("[USB4] configured\n");
+                    }
+                    if(upload_pending==0x57){
+                        upload_pending=0;remote_run=1;
+                        phase4=0;return; /* status ACK completed; no new DMA */
                     }
                     ok = arm4();
                 }
@@ -482,6 +506,7 @@ static void usbstat4(void) {
     usb_val("event cursor", cursor4, 2);
     if(usb_owned)usb_handoff_regs4();
     upload_status4();
+    usb_val("remote enabled",remote_enabled,1);
 }
 
 /* Snapshot: no register writes and no dereference of inherited DMA pointers. */
