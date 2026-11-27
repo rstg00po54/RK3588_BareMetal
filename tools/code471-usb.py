@@ -7,6 +7,7 @@ import ctypes.util
 import pathlib
 import sys
 import struct
+import time
 
 class Descriptor(C.Structure):
     _fields_ = [
@@ -19,21 +20,38 @@ class Descriptor(C.Structure):
         ("iSerialNumber", C.c_uint8), ("bNumConfigurations", C.c_uint8),
     ]
 
-def packed_payload(container, raw):
-    # Read exactly the bytes selected by RKBoot::GetEntryData for CODE471.
-    if len(container)<102 or container[:4]!=b"BOOT" or container[25]!=1:
-        raise ValueError("expected RKBOOT container with exactly one CODE471")
+def packed_payloads(container, raw):
+    # RKBoot.cpp accepts BOOT and LDR (including newer UsbHead entries).
+    if len(container)<102 or container[:4] not in (b"BOOT",b"LDR "):
+        raise ValueError(f"unknown RKBOOT header {container[:4]!r}")
+    header=struct.unpack_from("<H",container,4)[0]
+    count=container[25]
     off=struct.unpack_from("<I",container,26)[0]
-    if container[30]!=57 or off<102 or off+57>len(container):
-        raise ValueError("invalid CODE471 entry")
-    start,size=struct.unpack_from("<II",container,off+45)
-    if start<off+57 or not 4<=size<=65536 or start+size>len(container)-4:
-        raise ValueError("invalid CODE471 payload range")
-    payload=container[start:start+size]
-    if not payload.startswith(raw) or any(payload[len(raw):]):
-        raise ValueError("packed CODE471 is not the raw image plus zero padding")
-    print(f"RKBOOT CODE471 offset={start} size={size} padding={size-len(raw)}",flush=True)
-    return payload
+    stride=container[30]
+    print(f"RKBOOT tag={container[:4]!r} header={header} CODE471 count={count} table={off} stride={stride}",flush=True)
+    if not 1<=count<=16 or not 102<=header<=off or stride<57 or off+count*stride>len(container)-4:
+        raise ValueError("invalid CODE471 table")
+    entries=[]
+    for i in range(count):
+        pos=off+i*stride
+        kind=struct.unpack_from("<I",container,pos+1)[0]
+        name=container[pos+5:pos+45].decode("utf-16le").split("\x00",1)[0]
+        begin,size,delay=struct.unpack_from("<III",container,pos+45)
+        print(f"471[{i}] name={name!r} type={kind} offset={begin} size={size} delay={delay}",flush=True)
+        if kind!=1 or begin<off+count*stride or not 4<=size<=65536 or begin+size>len(container)-4:
+            raise ValueError("invalid CODE471 entry")
+        payload=container[begin:begin+size]
+        match=payload.startswith(raw) and not any(payload[len(raw):])
+        print(f"  raw image match={match}; first16={payload[:16].hex()}",flush=True)
+        entries.append((name,payload,delay,match))
+    matches=[i for i,e in enumerate(entries) if e[3]]
+    if matches!=[len(entries)-1]:
+        raise ValueError("expected raw image plus zero padding in final CODE471 entry; refusing USB transfer")
+    if any(e[0].lower()!="usbhead" for e in entries[:-1]):
+        raise ValueError("unexpected preceding CODE471 entry; refusing USB transfer")
+    if any(e[2]>10000 for e in entries):
+        raise ValueError("entry delay exceeds safety bound")
+    return [(name,payload,delay) for name,payload,delay,_ in entries]
 
 def framed(raw):
     if not 4 <= len(raw) <= 65536 or len(raw) % 4:
@@ -45,18 +63,25 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("image", type=pathlib.Path)
     p.add_argument("--packed", type=pathlib.Path, help="use exact CODE471 entry from boot_merger output")
+    p.add_argument("--inspect", action="store_true", help="parse and report frames without opening USB")
     p.add_argument("--timeout-ms", type=int, default=10000)
     a = p.parse_args()
     if not 100 <= a.timeout_ms <= 60000:
         p.error("timeout must be 100..60000 ms")
     raw = a.image.read_bytes()
     if a.packed:
-        raw = packed_payload(a.packed.read_bytes(),raw)
+        entries = packed_payloads(a.packed.read_bytes(),raw)
     else:
         size=len(raw)
         raw += bytes((-size)%2048)
         print(f"CODE471 2048-byte alignment: {size} -> {len(raw)}",flush=True)
-    data = framed(raw)
+        entries=[("raw",raw,0)]
+    frames=[(name,payload,framed(payload),delay) for name,payload,delay in entries]
+    for name,payload,data,delay in frames:
+        print(f"CODE471 {name!r} raw={len(payload)} framed={len(data)} CRC=0x{data[-2:].hex()} delay={delay}",flush=True)
+    if a.inspect:
+        print("Offline inspection complete; no USB requests sent.",flush=True)
+        return 0
     name = ctypes.util.find_library("usb-1.0")
     if not name:
         raise RuntimeError("libusb-1.0 not found")
@@ -119,20 +144,22 @@ def main():
             raise RuntimeError("claim interface 0: " + error(rc).decode())
         claimed = True
         print("Interface 0 claimed", flush=True)
-        print(f"CODE471 raw={len(raw)} framed={len(data)} CRC=0x{data[-2:].hex()}",flush=True)
-        for off in range(0,len(data),4096):
-            part=data[off:off+4096]
-            final=off+len(part)==len(data)
-            buf=(U8*len(part)).from_buffer_copy(part)
-            print(f"TX 0x471 offset=0x{off:05x} bytes={len(part)} final={final}",flush=True)
-            rc=ctrl(handle,0x40,0x0c,0,0x0471,buf,len(part),a.timeout_ms)
-            if rc!=len(part):
-                detail=error(rc).decode() if rc<0 else f"short transfer: {rc}"
-                print(f"USB transfer not acknowledged: {detail}",file=sys.stderr,flush=True)
-                if final:
-                    print("Final request may already have executed CODE471; check UART manually. No retry.",flush=True)
-                return 2
-            print("ACK",flush=True)
+        for entry_name,payload,data,delay in frames:
+            for off in range(0,len(data),4096):
+                part=data[off:off+4096]
+                final=off+len(part)==len(data)
+                buf=(U8*len(part)).from_buffer_copy(part)
+                print(f"TX 0x471 {entry_name!r} offset=0x{off:05x} bytes={len(part)} final={final}",flush=True)
+                rc=ctrl(handle,0x40,0x0c,0,0x0471,buf,len(part),a.timeout_ms)
+                if rc!=len(part):
+                    detail=error(rc).decode() if rc<0 else f"short transfer: {rc}"
+                    print(f"USB transfer not acknowledged: {detail}",file=sys.stderr,flush=True)
+                    if final:
+                        print("Final request may already have executed CODE471; check UART manually. No retry.",flush=True)
+                    return 2
+                print("ACK",flush=True)
+            if delay:
+                time.sleep(delay/1000)
         print("CODE471 transfer acknowledged. Check UART manually; no CODE472 sent.",flush=True)
         return 0
     finally:
