@@ -4,7 +4,8 @@
 This is a reverse-engineering harness, not a general ARM emulator.
 Requires Python 3, clang and llvm-objdump; no Unicorn or board.
 Only the exact unpatched image is accepted. All MMIO is a Python dict.
-The isolated PHY pass omits 32a0 and uses partial-prefix seed values.
+The PHY passes include 32a0 before 6aac/6214, but still omit reset
+and address-map steps in 89dc. Commit acknowledgements are scripted.
 The target memset is replaced by a byte fill. Unknown instructions
 or addresses fail closed. Initial synthetic register values are zero.
 Do NOT use output as a hardware write script.
@@ -52,7 +53,7 @@ regs=[0]*32; regs[:6]=[R,P,T,528,8,0]
 regs[31]=0xff0f0000; regs[30]=STOP
 N=Z=C=V=0
 pc=B+0x6dc4
-steps=0; phase=0; mmio={}; trace=[]; ctl_trace=[]
+steps=0; phase=0; mmio={}; trace=[]; ctl_trace=[]; electrical_trace=[]
 
 def val(s):
     s=s.strip()
@@ -67,14 +68,19 @@ def put(r,v):
 
 def rd(a,n):
     if CTL<=a<CTL+0x400000 or PHY<=a<PHY+0x1000:
-        assert phase in (1,2) and n==4 and a%4==0
-        v=mmio.get(a,0); trace.append(("R",cur-B,a,v)); return v
+        assert phase in (1,2,3) and n==4 and a%4==0
+        v=mmio.get(a,0)
+        if phase==2 and a==CTL+0x10c84:
+            # Synthetic commit response, not a model of DDRCTL.
+            assert mmio.get(CTL+0x10c80)==1
+            v=1
+        trace.append(("R",cur-B,a,v)); return v
     assert 0<=a-memstart<=len(mem)-n,hex(a)
     return int.from_bytes(mem[a-memstart:a-memstart+n],"little")
 
 def wr(a,v,n):
     if CTL<=a<CTL+0x400000 or PHY<=a<PHY+0x1000:
-        assert phase in (1,2) and n==4 and a%4==0
+        assert phase in (1,2,3) and n==4 and a%4==0
         v&=0xffffffff; trace.append(("W",cur-B,a,v)); mmio[a]=v; return
     assert 0<=a-memstart<=len(mem)-n,hex(a)
     mem[a-memstart:a-memstart+n]=(v&((1<<(8*n))-1)).to_bytes(n,"little")
@@ -110,22 +116,30 @@ def fnv(data):
 
 while True:
     if pc==STOP:
-        if phase==2: break
-        if phase==1:
+        if phase==3: break
+        if phase==2:
+            assert steps==1574 and len(trace)==32
+            assert sum(t[0]=="W" for t in trace)==16
+            assert [rd(R+o,4) for o in (0x1c4,0x1c8,0x1cc,0x1d0,0x2c8)]==[7,7,7,6,10]
+            assert [mmio[CTL+o] for o in (0x504,0x508,0x50c)]==[0x00310000,0x5c,0x0006005c]
+            electrical_trace=trace[:]; trace.clear(); phase=3
+            regs[:6]=[H,0,R,0,0,0]; regs[31]=0xff0f0000
+            regs[30]=STOP; pc=B+0x6aac
+        elif phase==1:
             assert steps==1138 and len(executed)==1072
             assert sum(t[0]=="W" for t in trace)==53 and sum(t[0]=="R" for t in trace)==15
             assert fnv(b"".join(words[x].to_bytes(4,"little") for x in sorted(executed)))==0xb26c2d45
             assert mmio[CTL]==0x19161217 and mmio[CTL+0x10000]==0x03080002
             ctl_trace=trace[:]; trace.clear(); phase=2
-            # Isolated second PHY wrapper call at 8e3c; NOT the full
-            # 89dc path. Missing preceding 32a0 side effects are NOT simulated.
+            # First electrical config call at 8c90; NOT the full
+            # 89dc path. Reset/address-map operations still omitted.
             # Seed ONLY previously measured partial-prefix registers.
             wr(H+8,PHY,8)
             for off,v in ((0,0x44005011),(0xa1c,0x20820),(0xb0,0x2000017e),
                           (0xb4,0x00200100),(0xb8,0x2640),(0xbf4,9)):
                 mmio[PHY+off]=v
             regs[:6]=[H,0,R,0,0,0]; regs[31]=0xff0f0000
-            regs[30]=STOP; pc=B+0x6aac
+            regs[30]=STOP; pc=B+0x32a0
         else:
             print("generator steps",steps,"return",regs[0])
             assert regs[0]==0 and steps==641
@@ -176,6 +190,10 @@ while True:
             v=val(a[1]); l=val(a[2]); w=val(a[3])
             put(a[0],(v>>l)&((1<<w)-1) if m=="ubfx" else (v&((1<<w)-1))<<l)
         elif m=="cmp": flags(val(a[0]),opval(a,1),32 if a[0][0]=="w" else 64)
+        elif m=="ccmp":
+            if cond(a[3]): flags(val(a[0]),val(a[1]),32 if a[0][0]=="w" else 64)
+            else:
+                v=val(a[2]); N,Z,C,V=[(v>>i)&1 for i in (3,2,1,0)]
         elif m=="tst":
             v=val(a[0])&opval(a,1)
             Z=int(v==0); N=v>>(31 if a[0][0]=="w" else 63); C=V=0
@@ -208,18 +226,24 @@ while True:
         print(hex(cur-B),m,s,"regs",[hex(x) for x in regs],file=sys.stderr)
         raise
 
-assert steps==1451
+assert steps==1887 and len(executed)==1703
 assert sum(t[0]=="W" for t in trace)==22 and sum(t[0]=="R" for t in trace)==21
-assert fnv(b"".join(words[x].to_bytes(4,"little") for x in sorted(executed)))==0x59caa160
+assert fnv(b"".join(words[x].to_bytes(4,"little") for x in sorted(executed)))==0x4e98a04d
 assert fnv(blob[0x115d0:0x11828])==0xa1b636de
 assert fnv(blob[0x6214:0x6aac])==0x1d86a539
+assert fnv(blob[0x32a0:0x3ad4])==0x61e6d365
+assert fnv(blob[0x11a08:0x11a88])==0x0aea8583
+assert fnv(blob[0x125f0:0x12600])==0x4eed1215
 assert mmio[PHY+0xb0]==0x2002ef7f and mmio[PHY+0xb8]==0x2210
-assert mmio[PHY+0xc]==0x04050300
+assert mmio[PHY+0xc]==0x04050300 and mmio[PHY+0xa80]==0x5c000914
 print("OFFLINE INTERPRETER PASS",steps,"steps")
 print("Synthetic DDRCTL trace (68 accesses)")
 for typ,ip,addr,v in ctl_trace:
     print(f"{typ} pc={ip:05x} addr={addr:08x} value={v:08x}")
-print("Isolated PHY trace (43 accesses; NOT complete cold path)")
+print("Electrical trace (32 accesses; commit acknowledgements scripted)")
+for typ,ip,addr,v in electrical_trace:
+    print(f"{typ} pc={ip:05x} addr={addr:08x} value={v:08x}")
+print("PHY timing trace (43 accesses; NOT complete cold path)")
 for typ,ip,addr,v in trace:
     print(f"{typ} pc={ip:05x} addr={addr:08x} value={v:08x}")
 for name,base,size in (("R",R,0x358),("P",P,0x94),("T",T,0x2ac)):
