@@ -147,6 +147,7 @@ static void timer_info(void){
     out(counter_moves()?"[SRAM] COUNTER RUNNING\n":"[SRAM] COUNTER STALLED\n");
 }
 #include "usb_sram.h"
+#include "ddr_sram.h"
 
 static int rx(void){
     uint64_t start=timer_ok?SYS(CNTPCT_EL0):0;
@@ -236,7 +237,21 @@ void boot_fatal(uint64_t esr,uint64_t elr,uint64_t far){
     for(;;)__asm__ volatile("wfe");
 }
 static void cmd(const char *s){
-    if(eq(s,"help"))out("help info test uart rxmon timer timerinit usb usbstart usbstat usbstop usbload update usbremote usbtrace loadstat load run\n");
+    if(eq(s,"help"))out("help info test uart rxmon timer timerinit usb usbstart usbstat usbstop usbload update usbremote usbtrace loadstat load run\nddrpre ddr ddr0..3 ddrclk0..3 ddrphy0..3\n");
+    else if(eq(s,"ddrpre"))ddr_preflight();
+    else if(eq(s,"ddr"))ddr_info();
+    else if(eq(s,"ddr0"))ddr_channel(0);
+    else if(eq(s,"ddr1"))ddr_channel(1);
+    else if(eq(s,"ddr2"))ddr_channel(2);
+    else if(eq(s,"ddr3"))ddr_channel(3);
+    else if(eq(s,"ddrclk0"))ddr_clock(0);
+    else if(eq(s,"ddrclk1"))ddr_clock(1);
+    else if(eq(s,"ddrclk2"))ddr_clock(2);
+    else if(eq(s,"ddrclk3"))ddr_clock(3);
+    else if(eq(s,"ddrphy0"))ddr_phy(0);
+    else if(eq(s,"ddrphy1"))ddr_phy(1);
+    else if(eq(s,"ddrphy2"))ddr_phy(2);
+    else if(eq(s,"ddrphy3"))ddr_phy(3);
     else if(eq(s,"info"))info();
     else if(eq(s,"test"))test();
     else if(eq(s,"uart"))uart_diag();
@@ -272,7 +287,7 @@ static void cmd(const char *s){
 void boot_main(void){
     char line[64],history[4][64];
     unsigned n=0,last_cr=0,esc=0,hcount=0,hnext=0,hpos=0;
-    out("\n[SRAM] OpenBoot SRAM v0.5.0\n");
+    out("\n[SRAM] OpenBoot SRAM v0.5.1\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
     rx_pad_snapshot();
