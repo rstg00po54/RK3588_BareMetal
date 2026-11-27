@@ -4,6 +4,7 @@
 This is a reverse-engineering harness, not a general ARM emulator.
 Requires Python 3, clang and llvm-objdump; no Unicorn or board.
 Only the exact unpatched image is accepted. All MMIO is a Python dict.
+The isolated PHY pass omits 32a0 and uses partial-prefix seed values.
 The target memset is replaced by a byte fill. Unknown instructions
 or addresses fail closed. Initial synthetic register values are zero.
 Do NOT use output as a hardware write script.
@@ -26,7 +27,7 @@ assert len(blob) == 75320
 assert hashlib.sha1(blob).hexdigest() == "8d5e55ebf63d94618b448b79757b1f07733fd076"
 
 B=0xff001000; P=0xff081000; T=0xff082000; R=0xff080000; STOP=0xff090000
-H=0xff083000; CTL=0xf7000000
+H=0xff083000; CTL=0xf7000000; PHY=0xfe0c0000
 code={}; words={}; executed=set()
 # Make LLVM decode actual words directly from the input binary.
 # No manually pasted instruction snippets or external disassembly files.
@@ -51,7 +52,7 @@ regs=[0]*32; regs[:6]=[R,P,T,528,8,0]
 regs[31]=0xff0f0000; regs[30]=STOP
 N=Z=C=V=0
 pc=B+0x6dc4
-steps=0; phase=0; mmio={}; trace=[]
+steps=0; phase=0; mmio={}; trace=[]; ctl_trace=[]
 
 def val(s):
     s=s.strip()
@@ -65,15 +66,15 @@ def put(r,v):
     regs[31 if r=="sp" else int(r[1:])]=v&((1<<(32 if r[0]=="w" else 64))-1)
 
 def rd(a,n):
-    if CTL<=a<CTL+0x400000:
-        assert phase==1 and n==4 and a%4==0
+    if CTL<=a<CTL+0x400000 or PHY<=a<PHY+0x1000:
+        assert phase in (1,2) and n==4 and a%4==0
         v=mmio.get(a,0); trace.append(("R",cur-B,a,v)); return v
     assert 0<=a-memstart<=len(mem)-n,hex(a)
     return int.from_bytes(mem[a-memstart:a-memstart+n],"little")
 
 def wr(a,v,n):
-    if CTL<=a<CTL+0x400000:
-        assert phase==1 and n==4 and a%4==0
+    if CTL<=a<CTL+0x400000 or PHY<=a<PHY+0x1000:
+        assert phase in (1,2) and n==4 and a%4==0
         v&=0xffffffff; trace.append(("W",cur-B,a,v)); mmio[a]=v; return
     assert 0<=a-memstart<=len(mem)-n,hex(a)
     mem[a-memstart:a-memstart+n]=(v&((1<<(8*n))-1)).to_bytes(n,"little")
@@ -109,19 +110,35 @@ def fnv(data):
 
 while True:
     if pc==STOP:
-        if phase: break
-        print("generator steps",steps,"return",regs[0])
-        assert regs[0]==0 and steps==641
-        assert rd(P+0x28,4)==8 and rd(P+0x2c,4)==528
-        assert rd(R+0x228,8)==P and rd(R+0x230,8)==T
-        for ch in range(4):
-            assert [rd(R+ch*0x6c+i*4,4) for i in range(15)]==[2,11,3,1,1,0,17,17,0,0,0,0,0,0,0]
-        # H values are for the exact unpatched binary's first candidate.
-        phase=1; wr(H,CTL,8)
-        wr(H+0xe8,0,4); wr(H+0xec,13,4)
-        wr(H+0xf0,1,4); wr(H+0xf4,1,4); wr(H+0xf8,0,4)
-        regs[:6]=[H,0,R,0,0,0]; regs[31]=0xff0f0000
-        regs[30]=STOP; pc=B+0x5e38
+        if phase==2: break
+        if phase==1:
+            assert steps==1138 and len(executed)==1072
+            assert sum(t[0]=="W" for t in trace)==53 and sum(t[0]=="R" for t in trace)==15
+            assert fnv(b"".join(words[x].to_bytes(4,"little") for x in sorted(executed)))==0xb26c2d45
+            assert mmio[CTL]==0x19161217 and mmio[CTL+0x10000]==0x03080002
+            ctl_trace=trace[:]; trace.clear(); phase=2
+            # Isolated second PHY wrapper call at 8e3c; NOT the full
+            # 89dc path. Missing preceding 32a0 side effects are NOT simulated.
+            # Seed ONLY previously measured partial-prefix registers.
+            wr(H+8,PHY,8)
+            for off,v in ((0,0x44005011),(0xa1c,0x20820),(0xb0,0x2000017e),
+                          (0xb4,0x00200100),(0xb8,0x2640),(0xbf4,9)):
+                mmio[PHY+off]=v
+            regs[:6]=[H,0,R,0,0,0]; regs[31]=0xff0f0000
+            regs[30]=STOP; pc=B+0x6aac
+        else:
+            print("generator steps",steps,"return",regs[0])
+            assert regs[0]==0 and steps==641
+            assert rd(P+0x28,4)==8 and rd(P+0x2c,4)==528
+            assert rd(R+0x228,8)==P and rd(R+0x230,8)==T
+            for ch in range(4):
+                assert [rd(R+ch*0x6c+i*4,4) for i in range(15)]==[2,11,3,1,1,0,17,17,0,0,0,0,0,0,0]
+            # H values are for the exact unpatched binary's first candidate.
+            phase=1; wr(H,CTL,8)
+            wr(H+0xe8,0,4); wr(H+0xec,13,4)
+            wr(H+0xf0,1,4); wr(H+0xf4,1,4); wr(H+0xf8,0,4)
+            regs[:6]=[H,0,R,0,0,0]; regs[31]=0xff0f0000
+            regs[30]=STOP; pc=B+0x5e38
     steps+=1; assert steps<10000
     if pc==B+0xa0c:
         # A byte fill instead of interpreting the vendor memset body.
@@ -135,6 +152,7 @@ while True:
             else:
                 shift=val(a[2].split()[1]) if len(a)>2 else 0
                 put(a[0],(val(a[0])&~(65535<<shift))|(val(a[1])<<shift))
+        elif m=="nop": pass
         elif m=="adrp": put(a[0],B+int(a[1],0))
         elif m in ("add","sub","adds","subs","and","orr","eor","bic","mul","udiv","lsl","lsr","asr"):
             v=val(a[1]); u=opval(a,2); w=32 if a[0][0]=="w" else 64
@@ -175,11 +193,11 @@ while True:
         elif m in ("tbz","tbnz"):
             if (val(a[0])&(1<<val(a[1]))==0)==(m=="tbz"): pc=B+int(a[2],0)
         elif m=="ret": pc=regs[30]
-        elif m in ("ldr","ldrb","str","strb","ldp","stp"):
+        elif m in ("ldr","ldrb","ldrh","str","strb","ldp","stp"):
             pair=m in ("ldp","stp"); ix=2 if pair else 1
             ar=a[ix]; base,*off=ar.strip("[]!").split(", ")
             addr=val(base)+(opval(off,0) if off else 0)
-            n=1 if m.endswith("b") else 4 if a[0][0]=="w" else 8
+            n=1 if m.endswith("b") else 2 if m.endswith("h") else 4 if a[0][0]=="w" else 8
             if ar.endswith("!"): put(base,addr)
             for j in range(2 if pair else 1):
                 if m.startswith("ld"): put(a[j],rd(addr+j*n,n))
@@ -190,12 +208,18 @@ while True:
         print(hex(cur-B),m,s,"regs",[hex(x) for x in regs],file=sys.stderr)
         raise
 
-assert steps==1138 and len(executed)==1072
-assert sum(t[0]=="W" for t in trace)==53 and sum(t[0]=="R" for t in trace)==15
-assert fnv(b"".join(words[x].to_bytes(4,"little") for x in sorted(executed)))==0xb26c2d45
+assert steps==1451
+assert sum(t[0]=="W" for t in trace)==22 and sum(t[0]=="R" for t in trace)==21
+assert fnv(b"".join(words[x].to_bytes(4,"little") for x in sorted(executed)))==0x59caa160
 assert fnv(blob[0x115d0:0x11828])==0xa1b636de
-assert mmio[CTL]==0x19161217 and mmio[CTL+0x10000]==0x03080002
-print("OFFLINE INTERPRETER PASS",steps,"steps",len(trace),"synthetic accesses")
+assert fnv(blob[0x6214:0x6aac])==0x1d86a539
+assert mmio[PHY+0xb0]==0x2002ef7f and mmio[PHY+0xb8]==0x2210
+assert mmio[PHY+0xc]==0x04050300
+print("OFFLINE INTERPRETER PASS",steps,"steps")
+print("Synthetic DDRCTL trace (68 accesses)")
+for typ,ip,addr,v in ctl_trace:
+    print(f"{typ} pc={ip:05x} addr={addr:08x} value={v:08x}")
+print("Isolated PHY trace (43 accesses; NOT complete cold path)")
 for typ,ip,addr,v in trace:
     print(f"{typ} pc={ip:05x} addr={addr:08x} value={v:08x}")
 for name,base,size in (("R",R,0x358),("P",P,0x94),("T",T,0x2ac)):
