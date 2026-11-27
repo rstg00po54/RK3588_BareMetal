@@ -5,12 +5,18 @@ int cold_dfi_start_fragment(const struct cold_io *,unsigned,unsigned);
 int cold_dfi_complete_fragment(const struct cold_io *,unsigned,unsigned);
 int cold_mrw_fragment(const struct cold_io *,unsigned,unsigned,unsigned,unsigned,unsigned);
 int cold_phy_ack_fragment(const struct cold_io *,unsigned,unsigned);
+int cold_mrr_fragment(const struct cold_io *,unsigned,unsigned,unsigned,unsigned,uint8_t *);
 struct rec { uintptr_t a; uint32_t v; };
-struct mock { struct rec w[16]; unsigned n, delay, fail; };
+struct mock { struct rec w[16]; unsigned n, delay, fail, mrr; };
 static uint32_t read_mock(void *ctx,uintptr_t a)
 {
     struct mock *m=ctx;
     unsigned off=a&0xfff;
+    if(m->mrr){
+        if(off==0x90)return m->n<4?(m->fail==7?1:0):(m->fail==9?0:0x10000);
+        if(off==0x80 && m->n>=3)return m->n>=4 && m->fail==8?0x80000011U:0x11;
+        if(off==0x94)return 0x1234565c;
+    }
     if(off==0xc84)return m->fail==1?0:1;
     if(off==0x514)return m->fail==2?0:1;
     if(off==0x90)return m->fail==3 || (m->fail==5 && m->n>=3)?1:0;
@@ -56,5 +62,14 @@ int main(void)
     m=(struct mock){.fail=6};assert(cold_phy_ack_fragment(&io,0,4)==COLD_TIMEOUT && m.n==3 && m.delay==3);
     m=(struct mock){0};assert(cold_dfi_start_fragment(&io,4,4)==COLD_BAD_ARG && m.n==0);
     assert(cold_mrw_fragment(&io,0,0,11,0,4)==COLD_BAD_ARG && m.n==0);
-    puts("DFI/MRW/PHY fragments: mock success, timeout and argument tests PASS");
+    uint8_t data=0;
+    m=(struct mock){.mrr=1};assert(cold_mrr_fragment(&io,0,1,8,4,&data)==COLD_OK && m.n==4 && data==0x5c);
+    eq(&m,0,0xf7010080UL,0x01000030);eq(&m,1,0xf7010080UL,0x11);
+    eq(&m,2,0xf7010084UL,0x800);eq(&m,3,0xf7010080UL,0x80000011);
+    for(unsigned f=7;f<=9;f++){
+        data=0xa5;m=(struct mock){.mrr=1,.fail=f};
+        assert(cold_mrr_fragment(&io,0,1,8,4,&data)==COLD_TIMEOUT);
+        assert(m.n==(f==7?1:4) && m.delay==3 && data==0xa5);
+    }
+    puts("DFI/MRW/MRR/PHY fragments: mock success, timeout and argument tests PASS");
 }
