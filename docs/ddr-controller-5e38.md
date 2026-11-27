@@ -70,7 +70,7 @@ For type 8, 0x542c jumps to 0x58fc; first timing word:
 After 0x53e4 returns, first mode=0 and type!=9 sets C+0x280 bit29.
 C+0x000 uses rank/geometry flags, not just memory type:
   v = G[0]==2 ? 0x03000000 : 0x01000000;
-  v |= P[0x34]==16 ? 0x00040000 : 0x00080000;
+  v |= P[0x34]==16 ? 0x00080000 : 0x00040000;
   if (G[0xc]==0) v |= 0x1000;
   if (P[0x28] == 7 || P[0x28] == 8) v |= 2;
   else if (P[0x28] == 9) v |= 8;
@@ -120,3 +120,5 @@ controller writes above in isolation. First reconstruct the complete
 type-8 timing generator and its initial geometry/flags, then evaluate
 the resulting register plan on host and compare with vendor baseline.
 No independent DDR initialization or training has been proven.
+
+For the later offline execution results and corrected values, see [ddr-v118-offline-results.md](ddr-v118-offline-results.md).
