@@ -28,3 +28,14 @@ $(OUT)/probe%.elf: $(OUT)/entry.o $(OUT)/probe%.o boot/sram_app/link.ld
 $(OUT)/probe%.bin: $(OUT)/probe%.elf
 	$(CROSS_COMPILE)objcopy -O binary $< $@
 	test "$$(wc -c < $@)" -le 61440
+
+
+.PHONY: ddr
+ddr: $(OUT)/ddr-probe.bin
+$(OUT)/ddr-probe.o: boot/sram_app/ddr_probe.c boot/sram/app_abi.h | $(OUT)
+	$(CROSS_COMPILE)gcc $(CFLAGS) -c -o $@ $<
+$(OUT)/ddr-probe.elf: $(OUT)/entry.o $(OUT)/ddr-probe.o boot/sram_app/link.ld
+	$(CROSS_COMPILE)ld -T boot/sram_app/link.ld -o $@ $(OUT)/entry.o $(OUT)/ddr-probe.o
+$(OUT)/ddr-probe.bin: $(OUT)/ddr-probe.elf
+	$(CROSS_COMPILE)objcopy -O binary $< $@
+	test "$$(wc -c < $@)" -le 61440
