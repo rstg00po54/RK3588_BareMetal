@@ -149,3 +149,18 @@ vectors:
     slot fatal
     slot fatal
     slot fatal
+
+
+/* AAPCS64 trusted returning app; separate stack in inactive slot. */
+.section .text,"ax",%progbits
+.global app_call
+app_call:
+    stp x19, x30, [sp, #-16]!
+    mov x19, sp
+    mov x9, x0
+    mov sp, x1
+    mov x0, x2
+    blr x9
+    mov sp, x19
+    ldp x19, x30, [sp], #16
+    ret
