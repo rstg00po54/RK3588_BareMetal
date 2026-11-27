@@ -17,3 +17,14 @@ $(OUT)/app.bin: $(OUT)/app.elf
 	test "$$(wc -c < $@)" -le 61440
 clean:
 	rm -rf $(OUT)
+
+
+.PHONY: probes
+probes: $(OUT)/probe0.bin $(OUT)/probe1.bin $(OUT)/probe2.bin
+$(OUT)/probe%.o: boot/sram_app/probe.S | $(OUT)
+	$(CROSS_COMPILE)gcc -DAPP_PROBE=$* -c -o $@ $<
+$(OUT)/probe%.elf: $(OUT)/entry.o $(OUT)/probe%.o boot/sram_app/link.ld
+	$(CROSS_COMPILE)ld -T boot/sram_app/link.ld -o $@ $(OUT)/entry.o $(OUT)/probe$*.o
+$(OUT)/probe%.bin: $(OUT)/probe%.elf
+	$(CROSS_COMPILE)objcopy -O binary $< $@
+	test "$$(wc -c < $@)" -le 61440
