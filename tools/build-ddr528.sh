@@ -10,6 +10,13 @@ original="$rkbin/bin/rk35/rk3588_ddr_lp4_1848MHz_lp5_2400MHz_v1.18.bin"
 blob="$out/ddr528.bin"
 mkdir -p "$out"
 
+# The SDK includes the Python implementation, not the legacy executable.
+ddrtool="$rkbin/tools/ddrbin_tool.py"
+if [[ ! -f "$ddrtool" ]]; then
+    echo "Missing DDR tool: $ddrtool" >&2
+    exit 1
+fi
+
 make -f boot/v06.mk all
 cp "$original" "$blob"
 
@@ -35,9 +42,12 @@ dst.write_text("\n".join(lines) + "\n")
 PY
 
 cd "$rkbin"
-./tools/ddrbin_tool rk3588 -g "$out/original-params.txt" "$original"
-./tools/ddrbin_tool rk3588 "$out/params.txt" "$blob"
-./tools/ddrbin_tool rk3588 -g "$out/patched-params.txt" "$blob"
+rm -f "$out/original-params.txt" "$out/patched-params.txt" "$out/rk3588-baremetal-ram-only.bin"
+python3 "$ddrtool" rk3588 -g "$out/original-params.txt" "$original"
+test -s "$out/original-params.txt"
+python3 "$ddrtool" rk3588 "$out/params.txt" "$blob"
+python3 "$ddrtool" rk3588 -g "$out/patched-params.txt" "$blob"
+test -s "$out/patched-params.txt"
 
 # Verify actual readback, not just the input parameters.
 python3 - "$out/patched-params.txt" <<'PY'
