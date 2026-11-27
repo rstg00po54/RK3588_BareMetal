@@ -36,4 +36,33 @@ Expected UART: [APP] call; USB remains running, hello, returned 12345678.
 Expected host: APP RETURN PASS; result=0x12345678; monitor slot unchanged.
 Measure exec time and verify no USB disconnect in dmesg.
 Do not resend after an uncertain execute or failed return.
-First build and actual target verification are pending.
+Initial v0.6.0 hello upload verified but app did not return. See v0.6.1 results below.
+
+
+## v0.6.1 hardware verification
+
+Three incremental assembly probes all compiled and ran on the board,
+with monitor in Slot A (FF001000), app entry FF011010 and app stack
+top FF021000. Runtime ABI callback addresses were inside the monitor:
+puts FF002058, ticks FF002700. User's actual test:
+
+| Image | Bytes | Return | Upload + execute + return |
+|---|---:|---|---:|
+| probe0.bin | 36 | 12345678 | 5 ms |
+| probe1.bin | 80 | 12345679 | 6 ms |
+| probe2.bin | 92 | 1234567A | 6 ms |
+
+All CRC32 verifications passed; host confirmed result and ping on the
+same USB handle, unchanged monitor slot. UART confirmed callback output
+"[APP] Assembly callback PASS". No intentional controller restart.
+The previous hello failure's exact root cause remains unproven; runtime
+callback pointer stores in v0.6.1 are consistent with the suspected
+absolute-address template issue. Rebuild and test the C hello next.
+
+Repeated unsupported setup 80 06 0F00 0000 0005 is GET_DESCRIPTOR(BOS),
+not an app execution error. USB bcdUSB is 0200, and no BOS descriptor
+is advertised. Leave the current STALL behavior intact for now; log
+rate limiting is active. Do not fake SuperSpeed or LPM capability.
+
+Monitor slot B execution and ordinary C hello have not yet been tested
+with v0.6.1. No DDR writes were performed by these probes.
