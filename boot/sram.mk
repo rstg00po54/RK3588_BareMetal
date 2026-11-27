@@ -8,7 +8,7 @@ $(OUT):
 	mkdir -p $@
 $(OUT)/entry.o: boot/sram/entry.S | $(OUT)
 	$(CROSS_COMPILE)gcc -c -ffreestanding -o $@ $<
-$(OUT)/main.o: boot/sram/main.c boot/sram/usb_sram.h boot/sram/ddr_sram.h | $(OUT)
+$(OUT)/main.o: boot/sram/main.c boot/sram/usb_sram.h boot/sram/ddr_sram.h boot/sram/app_abi.h | $(OUT)
 	$(CROSS_COMPILE)gcc $(CFLAGS) -c -o $@ $<
 $(OUT)/sram.elf: $(OUT)/entry.o $(OUT)/main.o boot/sram/link.ld
 	$(CROSS_COMPILE)ld -T boot/sram/link.ld -o $@ $(OUT)/entry.o $(OUT)/main.o
