@@ -6,6 +6,7 @@
 #define CHUNK 128U
 extern __attribute__((visibility("hidden"))) char _start[], __stack_top[], __image_end[];
 static uintptr_t loaded;
+static int timer_ok;
 static volatile uint32_t bss_test;
 static volatile uint32_t scratch[256];
 #define SYS(reg) ({ uint64_t x; __asm__ volatile("mrs %0, " #reg : "=r"(x)); x; })
@@ -26,14 +27,47 @@ static uintptr_t alternate(void) {
     uintptr_t a=(uintptr_t)_start;
     return a==SLOT_A?SLOT_B:a==SLOT_B?SLOT_A:0;
 }
+static void timer_write(unsigned off,uint32_t v){
+    *(volatile uint32_t *)(0xfd8c8000UL+off)=v;
+}
+static int counter_moves(void){
+    uint64_t first=SYS(CNTPCT_EL0);
+    for(unsigned i=0;i<10000;++i)
+        if(SYS(CNTPCT_EL0)!=first)return 1;
+    return 0;
+}
+static void timer_init(void){
+    /* DDR v1.18 0x105f0 / 0x10618: 24 MHz and system timer setup.
+     * Do not reset an already running counter during a hot update. */
+    uint64_t hz=24000000;
+    __asm__ volatile("msr cntfrq_el0, %0; isb"::"r"(hz):"memory");
+    if(!counter_moves()){
+        timer_write(0x04,0);
+        __asm__ volatile("dsb sy" ::: "memory");
+        timer_write(0x14,0xffffffffU);
+        timer_write(0x18,0xffffffffU);
+        timer_write(0x08,0);
+        __asm__ volatile("dsb sy" ::: "memory");
+        timer_write(0x04,1);
+        __asm__ volatile("dsb sy; isb" ::: "memory");
+    }
+    timer_ok=counter_moves();
+    out(timer_ok?"[SRAM] TIMER PASS\n":"[SRAM] TIMER STALLED; bounded polling fallback\n");
+}
+static void timer_info(void){
+    val("CNTFRQ_EL0 = ",SYS(CNTFRQ_EL0));
+    val("CNTPCT_EL0 = ",SYS(CNTPCT_EL0));
+    out(counter_moves()?"[SRAM] COUNTER RUNNING\n":"[SRAM] COUNTER STALLED\n");
+}
 static int rx(void){
     uint64_t start=SYS(CNTPCT_EL0);
-    /* Original ROM DDR code uses 24 ticks/us. Limit each byte to 5 s. */
-    do {
+    /* Absolute loop bound even if the counter stops. */
+    for(unsigned spins=0;spins<100000000U;++spins){
         uint32_t l=ur(0x14);
         if(l&0x1e){if(l&1)(void)ur(0);return -1;}
         if(l&1)return ur(0)&255;
-    }while(SYS(CNTPCT_EL0)-start<120000000ULL);
+        if(timer_ok && SYS(CNTPCT_EL0)-start>=120000000ULL)break;
+    }
     return -1;
 }
 static int get32(uint32_t *v){
@@ -102,18 +136,19 @@ void boot_fatal(uint64_t esr,uint64_t elr,uint64_t far){
     for(;;)__asm__ volatile("wfe");
 }
 static void cmd(const char *s){
-    if(eq(s,"help"))out("help info test load run\n");
+    if(eq(s,"help"))out("help info test timer load run\n");
     else if(eq(s,"info"))info();
     else if(eq(s,"test"))test();
+    else if(eq(s,"timer"))timer_info();
     else if(eq(s,"load"))load();
     else if(eq(s,"run"))run();
     else if(*s)out("Unknown command\n");
 }
 void boot_main(void){
     char line[64];unsigned n=0;
-    out("\n[SRAM] OpenBoot SRAM v0.1\n");
+    out("\n[SRAM] OpenBoot SRAM v0.2\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
-    info();test();out("[SRAM] READY\ncc@SRAM:~$ ");
+    timer_init();info();test();out("[SRAM] READY\ncc@SRAM:~$ ");
     for(;;){
         if(!(ur(0x14)&1))continue;
         unsigned c=ur(0)&255;
