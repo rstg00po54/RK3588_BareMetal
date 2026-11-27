@@ -16,23 +16,28 @@ _start:
     isb
     adr x0, __bss_start
     adr x1, __bss_end
-1:  cmp x0, x1
+1:
+    cmp x0, x1
     b.hs 2f
     str xzr, [x0], #8
     b 1b
-2:  bl boot_main
-3:  wfe
+2:
+    bl boot_main
+3:
+    wfe
     b 3b
 early_fail:
     movz x1, #0xfeb5, lsl #16
     mov w0, #33
     mov w3, #0x8000
-4:  ldr w2, [x1, #0x14]
+4:
+    ldr w2, [x1, #0x14]
     tbnz w2, #5, 5f
     subs w3, w3, #1
     b.ne 4b
     b 3b
-5:  str w0, [x1]
+5:
+    str w0, [x1]
     b 3b
 
 /* Return 1 on success; recover only a synchronous data abort at this load. */
