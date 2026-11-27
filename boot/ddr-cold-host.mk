@@ -5,7 +5,7 @@ CFLAGS ?= -O2
 D := boot/ddr_cold
 O := out/host/ddr-cold
 WARN := -std=c11 -Wall -Wextra -Werror -UNDEBUG
-TESTS := $(addprefix $(O)/,dfi switch ca geometry posttrain ctl528 phy528 train528 mode8 first528 probe528)
+TESTS := $(addprefix $(O)/,dfi switch ca geometry posttrain ctl528 phy528 train528 mode8 first528 probe528 guard528)
 .PHONY: all test clean
 all: $(TESTS)
 $(O):
@@ -32,6 +32,8 @@ $(O)/first528: $(D)/first528.c $(D)/test_first528.c $(D)/ctl528.c $(D)/phy528.c 
 	$(CC) $(CFLAGS) $(WARN) $(filter %.c,$^) -o $@
 $(O)/probe528: $(D)/probe528.c $(D)/test_probe528.c $(D)/first528.c $(D)/ctl528.c $(D)/phy528.c $(D)/dfi_fragments.c $(D)/freq528.c $(D)/train528.c $(D)/ca_scan.c $(D)/train528_mode8.c $(D)/lp4x_geometry.c $(D)/probe528.h $(D)/first528.h $(D)/train528.h $(D)/train528_mode8.h $(D)/lp4x_geometry.h $(D)/cold_steps.h | $(O)
 	$(CC) $(CFLAGS) $(WARN) $(filter %.c,$^) -o $@
+$(O)/guard528: $(D)/cold528_guard.c $(D)/test_cold528_guard.c $(D)/cold528_guard.h $(D)/cold_steps.h | $(O)
+	$(CC) $(CFLAGS) $(WARN) $(filter %.c,$^) -o $@
 test: all
 	$(O)/dfi
 	$(O)/switch
@@ -47,5 +49,6 @@ test: all
 	$(PYTHON) $(D)/test_mode8_vectors.py $(O)/mode8
 	$(O)/first528
 	$(O)/probe528
+	$(O)/guard528
 clean:
 	rm -rf $(O)
