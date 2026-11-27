@@ -1,13 +1,7 @@
 /* v1.18 a080..a0f4, a120..a1f0, a734..a84c.
  * Pure data decoder. No MMIO, no DRAM access. Inputs must come from
  * successful MRR transactions. These are vendor structure fields. */
-#include <stdint.h>
-#include <stddef.h>
-struct lp4x_probe {
-    uint8_t mr8_rank0, mr8_rank1, mr0_rank1;
-    uint8_t mr_rank0[3], mr_rank1[3]; /* MR12, MR5, MR14 */
-};
-struct lp4x_geo { uint32_t g[0x6c/4]; };
+#include "lp4x_geometry.h"
 static unsigned rows(uint8_t mr8){return 14+((((mr8>>2)&15)+1)>>1);}
 int lp4x_geometry528(const struct lp4x_probe *p,struct lp4x_geo *out){
     if(!p||!out)return -1;
