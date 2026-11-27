@@ -38,3 +38,36 @@ Next: confirm USB ping after prefix and capture ddrclk0 then ddrphy0
 on the current partial state. No new write stage until input parameters
 and clock/reset prerequisites for the PHY routine are reconstructed.
 An inaccessible cold PHY can cause a bus hang despite probe32.
+
+
+## Monitor v0.6.1 hardware follow-up
+
+After strict-alignment C app fix (4bf546f), cold preflight returned
+44440001 (CRU_SOFTRST=40, PHY_CRU_RESET=6). Stage1 repeated successfully,
+USB configured and ping passed. Independent 1168-byte DDR app returned
+44440002 on the same USB handle in 16 ms total; CRC32=860d3367.
+CH0 PHY raw B0=2000017E, B4=00200100, B8=00002640,
++000=44005011, +A1C=00020820. DDR is still not initialized.
+
+## Exact first cold PHY branch, corrected disassembly
+
+Re-decoded original vendor bytes with AArch64 llvm-objdump. At 8a40
+mov w28,#1; 8b40 mov w3,w28; 8b48 mov w4,#0 (NOT #4);
+8b4c mov x2,x20; 8b50 mov w1,w21; 8b54 mov x0,x19;
+8b5c bl 6aac. Therefore this first wrapper call selects mode 1.
+The earlier w4=4 description above is incorrect.
+
+6ad4 sets w3=0 for 6180. 6198 loads config=[x2+228].
+If config+28 != 9, 6200 sets write value 9; otherwise:
+lookup=fn3228(9, word[config+2c]);
+value=(byte[lookup+12]<<4) | (word[config+60]==128 ? 10 : 12).
+61e4..61ec writes value to PHY+BF4 for mode 0.
+Then 6ae4..6b04 writes PHY+000 =
+(old & 0xfcf7ffff) | (type==9 ? 0x02080000 : 0).
+For observed old value 44005011 and type==9, arithmetic prediction
+is 46085011, NOT an authorized write sequence. Need establish exact
+parameter table values and restore temporary global clock conditions
+as required by the original call before advancing writes.
+Do not clear PHY+A1C bit18 in this first mode-1 branch; that belongs
+to the separate mode!=1 path. Added guarded read-only BF4 sample
+to DDR app (bd28e9b); no new register writes.
