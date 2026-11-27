@@ -1,0 +1,2 @@
+rk3588-lubancat-uart0-m2-overlay.o: \
+ arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-uart0-m2-overlay.dts

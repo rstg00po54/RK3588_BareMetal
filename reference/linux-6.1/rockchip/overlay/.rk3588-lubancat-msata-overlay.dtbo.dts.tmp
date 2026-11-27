@@ -1,0 +1,25 @@
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-msata-overlay.dts"
+# 1 "<built-in>"
+# 1 "<command-line>"
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-msata-overlay.dts"
+/dts-v1/;
+/plugin/;
+
+/ {
+ fragment@0 {
+  target = <&pcie2x1l2>;
+
+  __overlay__ {
+   status = "disabled";
+  };
+ };
+
+ fragment@1 {
+  target = <&sata0>;
+
+  __overlay__ {
+   status = "okay";
+   vpcie3v3-supply = <&vcc3v3_pcie20>;
+  };
+ };
+};

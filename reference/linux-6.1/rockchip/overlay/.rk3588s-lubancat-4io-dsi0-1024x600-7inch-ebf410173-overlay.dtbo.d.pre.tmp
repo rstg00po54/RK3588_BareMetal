@@ -1,0 +1,6 @@
+rk3588s-lubancat-4io-dsi0-1024x600-7inch-ebf410173-overlay.o: \
+ arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-4io-dsi0-1024x600-7inch-ebf410173-overlay.dts \
+ scripts/dtc/include-prefixes/dt-bindings/gpio/gpio.h \
+ scripts/dtc/include-prefixes/dt-bindings/pinctrl/rockchip.h \
+ scripts/dtc/include-prefixes/dt-bindings/display/drm_mipi_dsi.h \
+ scripts/dtc/include-prefixes/dt-bindings/interrupt-controller/irq.h

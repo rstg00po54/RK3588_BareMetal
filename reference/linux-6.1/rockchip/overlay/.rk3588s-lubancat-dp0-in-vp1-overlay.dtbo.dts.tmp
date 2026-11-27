@@ -1,0 +1,58 @@
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-dp0-in-vp1-overlay.dts"
+# 1 "<built-in>"
+# 1 "<command-line>"
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-dp0-in-vp1-overlay.dts"
+/dts-v1/;
+/plugin/;
+
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/gpio/gpio.h" 1
+# 5 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-dp0-in-vp1-overlay.dts" 2
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/pinctrl/rockchip.h" 1
+# 6 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-dp0-in-vp1-overlay.dts" 2
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/display/drm_mipi_dsi.h" 1
+# 7 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-dp0-in-vp1-overlay.dts" 2
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/interrupt-controller/irq.h" 1
+# 8 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-dp0-in-vp1-overlay.dts" 2
+
+/ {
+ fragment@0 {
+  target = <&dp0>;
+
+  __overlay__ {
+   status = "okay";
+  };
+ };
+
+ fragment@1 {
+  target = <&route_dp0>;
+
+  __overlay__ {
+   status = "okay";
+   connect = <&vp1_out_dp0>;
+  };
+ };
+
+ fragment@2 {
+  target = <&dp0_in_vp0>;
+
+  __overlay__ {
+   status = "disabled";
+  };
+ };
+
+ fragment@4 {
+  target = <&dp0_in_vp1>;
+
+  __overlay__ {
+   status = "okay";
+  };
+ };
+
+ fragment@5 {
+  target = <&dp0_in_vp2>;
+
+  __overlay__ {
+   status = "disabled";
+  };
+ };
+};

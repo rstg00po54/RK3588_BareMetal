@@ -1,0 +1,8 @@
+/build/
+/out/
+/output/
+*.o
+*.su
+*.d
+*.pyc
+__pycache__/

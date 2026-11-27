@@ -1,0 +1,3 @@
+rk3588-lubancat-canfd0-m0-overlay.o: \
+ arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-canfd0-m0-overlay.dts \
+ scripts/dtc/include-prefixes/dt-bindings/clock/rk3588-cru.h

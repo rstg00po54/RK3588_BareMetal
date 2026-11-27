@@ -1,0 +1,6 @@
+rk3588s-lubancat-4io-dsi1-800x1280-10.1inch-s8001280b1060b-overlay.o: \
+ arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-4io-dsi1-800x1280-10.1inch-s8001280b1060b-overlay.dts \
+ scripts/dtc/include-prefixes/dt-bindings/gpio/gpio.h \
+ scripts/dtc/include-prefixes/dt-bindings/pinctrl/rockchip.h \
+ scripts/dtc/include-prefixes/dt-bindings/display/drm_mipi_dsi.h \
+ scripts/dtc/include-prefixes/dt-bindings/interrupt-controller/irq.h

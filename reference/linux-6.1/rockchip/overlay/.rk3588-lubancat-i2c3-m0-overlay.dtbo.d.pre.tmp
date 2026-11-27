@@ -1,0 +1,2 @@
+rk3588-lubancat-i2c3-m0-overlay.o: \
+ arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-i2c3-m0-overlay.dts

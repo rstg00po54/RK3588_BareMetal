@@ -1,0 +1,18 @@
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-pwm1-m0-overlay.dts"
+# 1 "<built-in>"
+# 1 "<command-line>"
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-pwm1-m0-overlay.dts"
+/dts-v1/;
+/plugin/;
+
+/ {
+ fragment@0 {
+  target = <&pwm1>;
+
+  __overlay__ {
+   status = "okay";
+   pinctrl-names = "active";
+   pinctrl-0 = <&pwm1m0_pins>;
+  };
+ };
+};

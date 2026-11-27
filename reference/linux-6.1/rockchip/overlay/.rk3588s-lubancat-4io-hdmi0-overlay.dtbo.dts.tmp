@@ -1,0 +1,83 @@
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-4io-hdmi0-overlay.dts"
+# 1 "<built-in>"
+# 1 "<command-line>"
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-4io-hdmi0-overlay.dts"
+/dts-v1/;
+/plugin/;
+
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/gpio/gpio.h" 1
+# 5 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-4io-hdmi0-overlay.dts" 2
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/pinctrl/rockchip.h" 1
+# 6 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-4io-hdmi0-overlay.dts" 2
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/display/drm_mipi_dsi.h" 1
+# 7 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-4io-hdmi0-overlay.dts" 2
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/interrupt-controller/irq.h" 1
+# 8 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-4io-hdmi0-overlay.dts" 2
+
+/ {
+ fragment@0 {
+  target = <&hdmi0>;
+
+  __overlay__ {
+   enable-gpios = <&gpio1 4 0>;
+   status = "okay";
+  };
+ };
+
+ fragment@1 {
+  target = <&route_hdmi0>;
+
+  __overlay__ {
+   status = "okay";
+   connect = <&vp0_out_hdmi0>;
+  };
+ };
+
+ fragment@2 {
+  target = <&hdmi0_in_vp0>;
+
+  __overlay__ {
+   status = "okay";
+  };
+ };
+
+ fragment@3 {
+  target = <&hdptxphy_hdmi0>;
+
+  __overlay__ {
+   status = "okay";
+  };
+ };
+
+ fragment@4 {
+  target = <&hdmi0_in_vp1>;
+
+  __overlay__ {
+   status = "disabled";
+  };
+ };
+
+ fragment@5 {
+  target = <&hdmi0_in_vp2>;
+
+  __overlay__ {
+   status = "disabled";
+  };
+ };
+
+ fragment@6 {
+  target-path = "/";
+
+  __overlay__ {
+   hdmi0_sound: hdmi0-sound {
+    status = "okay";
+    compatible = "rockchip,hdmi";
+    rockchip,mclk-fs = <128>;
+    rockchip,card-name = "rockchip-hdmi0";
+    rockchip,cpu = <&i2s5_8ch>;
+    rockchip,codec = <&hdmi0>;
+    rockchip,jack-det;
+   };
+  };
+ };
+};

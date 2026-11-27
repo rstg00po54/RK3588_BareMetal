@@ -1,0 +1,23 @@
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-can0-m0-overlay.dts"
+# 1 "<built-in>"
+# 1 "<command-line>"
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-can0-m0-overlay.dts"
+/dts-v1/;
+/plugin/;
+
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/clock/rk3588-cru.h" 1
+# 5 "arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-can0-m0-overlay.dts" 2
+
+/ {
+ fragment@0 {
+  target = <&can0>;
+
+  __overlay__ {
+   status = "okay";
+   assigned-clocks = <&cru 112>;
+   assigned-clock-rates = <200000000>;
+   pinctrl-names = "default";
+   pinctrl-0 = <&can0m0_pins>;
+  };
+ };
+};

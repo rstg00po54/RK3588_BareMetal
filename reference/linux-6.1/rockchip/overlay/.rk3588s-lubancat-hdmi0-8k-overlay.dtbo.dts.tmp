@@ -1,0 +1,32 @@
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-hdmi0-8k-overlay.dts"
+# 1 "<built-in>"
+# 1 "<command-line>"
+# 1 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-hdmi0-8k-overlay.dts"
+/dts-v1/;
+/plugin/;
+
+# 1 "./scripts/dtc/include-prefixes/dt-bindings/clock/rk3588-cru.h" 1
+# 5 "arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-hdmi0-8k-overlay.dts" 2
+
+
+/ {
+
+ fragment@0 {
+  target = <&display_subsystem>;
+
+  __overlay__ {
+   clocks;
+   clock-names;
+  };
+ };
+
+ fragment@1 {
+  target = <&vop>;
+
+  __overlay__ {
+   status = "okay";
+   assigned-clocks = <&cru 624>;
+   assigned-clock-rates = <800000000>;
+  };
+ };
+};

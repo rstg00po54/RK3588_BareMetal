@@ -1,0 +1,10 @@
+rk3588s-lubancat-4io-cam2-imx415-overlay.o: \
+ arch/arm64/boot/dts/rockchip/overlay/rk3588s-lubancat-4io-cam2-imx415-overlay.dts \
+ scripts/dtc/include-prefixes/dt-bindings/usb/pd.h \
+ scripts/dtc/include-prefixes/dt-bindings/gpio/gpio.h \
+ scripts/dtc/include-prefixes/dt-bindings/pwm/pwm.h \
+ scripts/dtc/include-prefixes/dt-bindings/pinctrl/rockchip.h \
+ scripts/dtc/include-prefixes/dt-bindings/input/rk-input.h \
+ scripts/dtc/include-prefixes/dt-bindings/display/drm_mipi_dsi.h \
+ scripts/dtc/include-prefixes/dt-bindings/display/rockchip_vop.h \
+ scripts/dtc/include-prefixes/dt-bindings/sensor-dev.h

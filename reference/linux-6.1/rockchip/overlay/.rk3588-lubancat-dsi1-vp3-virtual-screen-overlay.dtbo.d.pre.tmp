@@ -1,0 +1,6 @@
+rk3588-lubancat-dsi1-vp3-virtual-screen-overlay.o: \
+ arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-dsi1-vp3-virtual-screen-overlay.dts \
+ scripts/dtc/include-prefixes/dt-bindings/gpio/gpio.h \
+ scripts/dtc/include-prefixes/dt-bindings/pinctrl/rockchip.h \
+ scripts/dtc/include-prefixes/dt-bindings/display/drm_mipi_dsi.h \
+ scripts/dtc/include-prefixes/dt-bindings/interrupt-controller/irq.h

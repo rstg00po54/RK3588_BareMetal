@@ -1,0 +1,4 @@
+rk3588-lubancat-spi0-m1-overlay.o: \
+ arch/arm64/boot/dts/rockchip/overlay/rk3588-lubancat-spi0-m1-overlay.dts \
+ scripts/dtc/include-prefixes/dt-bindings/gpio/gpio.h \
+ scripts/dtc/include-prefixes/dt-bindings/pinctrl/rockchip.h
