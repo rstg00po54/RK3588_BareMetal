@@ -10,7 +10,15 @@ case "$mode" in
     freq-only|dfs-only) ;;
     *) echo "Usage: bash tools/build-ddr-test.sh [freq-only|dfs-only]" >&2; exit 2 ;;
 esac
+payload_version="${2:-v06}"
+case "$payload_version" in
+    v06|v07) ;;
+    *) echo "Expected payload v06 or v07" >&2; exit 2 ;;
+esac
 name="ddr-$mode"
+if [[ "$payload_version" != v06 ]]; then
+    name="$name-$payload_version"
+fi
 out="$root/out/$name"
 original="$rkbin/bin/rk35/rk3588_ddr_lp4_1848MHz_lp5_2400MHz_v1.18.bin"
 blob="$out/ddr-test.bin"
@@ -23,7 +31,7 @@ if [[ ! -f "$ddrtool" ]]; then
     exit 1
 fi
 
-make -f boot/v06.mk all
+make -f "boot/$payload_version.mk" all
 cp "$original" "$blob"
 
 # Keep unrelated parameters unchanged, use the SDK's own template.
@@ -95,9 +103,9 @@ PY
 
 sed \
     -e "s@^Path1=bin/rk35/rk3588_ddr_lp4_1848MHz_lp5_2400MHz_v1.18.bin.*@Path1=../../out/$name/ddr-test.bin@" \
-    -e 's@^Path1=bin/rk35/rk3588_usbplug_v1.11.bin.*@Path1=../../out/v06/usb472.bin@' \
+    -e "s@^Path1=bin/rk35/rk3588_usbplug_v1.11.bin.*@Path1=../../out/$payload_version/usb472.bin@" \
     -e "s@^FlashData=.*@FlashData=../../out/$name/ddr-test.bin@" \
-    -e 's@^FlashBoot=.*@FlashBoot=../../out/v06/usb472.bin@' \
+    -e "s@^FlashBoot=.*@FlashBoot=../../out/$payload_version/usb472.bin@" \
     -e "s@^PATH=.*@PATH=../../out/$name/rk3588-baremetal-ram-only.bin@" \
     RKBOOT/RK3588MINIALL.ini > "$out/ram-only.ini"
 
