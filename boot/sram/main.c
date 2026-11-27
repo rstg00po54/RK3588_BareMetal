@@ -28,7 +28,11 @@ static uintptr_t alternate(void) {
     return a==SLOT_A?SLOT_B:a==SLOT_B?SLOT_A:0;
 }
 static void timer_write(unsigned off,uint32_t v){
+    val("[TIMER] write address = ",0xfd8c8000UL+off);
+    val("[TIMER] value = ",v);
     *(volatile uint32_t *)(0xfd8c8000UL+off)=v;
+    __asm__ volatile("dsb sy" ::: "memory");
+    out("[TIMER] write complete\n");
 }
 static int counter_moves(void){
     uint64_t first=SYS(CNTPCT_EL0);
@@ -39,8 +43,10 @@ static int counter_moves(void){
 static void timer_init(void){
     /* DDR v1.18 0x105f0 / 0x10618: 24 MHz and system timer setup.
      * Do not reset an already running counter during a hot update. */
+    out("[TIMER] explicit init: set CNTFRQ_EL0\n");
     uint64_t hz=24000000;
     __asm__ volatile("msr cntfrq_el0, %0; isb"::"r"(hz):"memory");
+    out("[TIMER] check counter\n");
     if(!counter_moves()){
         timer_write(0x04,0);
         __asm__ volatile("dsb sy" ::: "memory");
@@ -60,7 +66,7 @@ static void timer_info(void){
     out(counter_moves()?"[SRAM] COUNTER RUNNING\n":"[SRAM] COUNTER STALLED\n");
 }
 static int rx(void){
-    uint64_t start=SYS(CNTPCT_EL0);
+    uint64_t start=timer_ok?SYS(CNTPCT_EL0):0;
     /* Absolute loop bound even if the counter stops. */
     for(unsigned spins=0;spins<100000000U;++spins){
         uint32_t l=ur(0x14);
@@ -136,19 +142,20 @@ void boot_fatal(uint64_t esr,uint64_t elr,uint64_t far){
     for(;;)__asm__ volatile("wfe");
 }
 static void cmd(const char *s){
-    if(eq(s,"help"))out("help info test timer load run\n");
+    if(eq(s,"help"))out("help info test timer timerinit load run\n");
     else if(eq(s,"info"))info();
     else if(eq(s,"test"))test();
     else if(eq(s,"timer"))timer_info();
+    else if(eq(s,"timerinit"))timer_init();
     else if(eq(s,"load"))load();
     else if(eq(s,"run"))run();
     else if(*s)out("Unknown command\n");
 }
 void boot_main(void){
     char line[64];unsigned n=0;
-    out("\n[SRAM] OpenBoot SRAM v0.2\n");
+    out("\n[SRAM] OpenBoot SRAM v0.2.1\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
-    timer_init();info();test();out("[SRAM] READY\ncc@SRAM:~$ ");
+    info();test();out("[SRAM] READY\ncc@SRAM:~$ ");
     for(;;){
         if(!(ur(0x14)&1))continue;
         unsigned c=ur(0)&255;
