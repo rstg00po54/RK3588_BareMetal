@@ -37,7 +37,8 @@ static void delay4(unsigned ms) {
 static int wait4(unsigned o, uint32_t mask, uint32_t expected, unsigned ms) {
     uint64_t t = ticks4(), lim = (SYS(CNTFRQ_EL0) / 1000) * ms;
     do {
-        if ((rd4(o) & mask) == expected) return 1;
+        if ((rd4(o) & mask) == expected)
+            return 1;
     } while (ticks4() - t < lim);
     val("[USB4] timeout offset", o, 4);
     val("value", rd4(o), 8);
@@ -46,12 +47,14 @@ static int wait4(unsigned o, uint32_t mask, uint32_t expected, unsigned ms) {
 
 static int cmd4(unsigned ep, unsigned cmd, uint32_t p0, uint32_t p1, uint32_t p2) {
     unsigned b = 0xc800 + ep * 16;
-    if (!wait4(b + 12, 1 << 10, 0, 50)) return 0;
+    if (!wait4(b + 12, 1 << 10, 0, 50))
+        return 0;
     wr4(b, p2);
     wr4(b + 4, p1);
     wr4(b + 8, p0);
     wr4(b + 12, cmd | (1 << 10));
-    if (!wait4(b + 12, 1 << 10, 0, 50)) return 0;
+    if (!wait4(b + 12, 1 << 10, 0, 50))
+        return 0;
     if (rd4(b + 12) & 0xf000) {
         val("[USB4] endpoint command error", rd4(b + 12), 8);
         return 0;
@@ -76,7 +79,7 @@ static int arm4(void) {
 
 static int status4(unsigned ep) {
     phase4 = 4;
-    return xfer4(ep, setup4, 0, three4 ? 4: 3);
+    return xfer4(ep, setup4, 0, three4 ? 4 : 3);
 }
 
 static int reject4(void) {
@@ -87,9 +90,12 @@ static const unsigned char dev4[] = {18, 1, 0, 2, 0, 0, 0, 64, 0x09, 0x12, 1, 0,
 static const unsigned char cfg4[] = {9, 2, 18, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 0, 0xff, 0, 0, 0 };
 static const unsigned char qual4[] = {10, 6, 0, 2, 0, 0, 0, 64, 1, 0 };
 static int reply4(const unsigned char *p, unsigned n, unsigned len, unsigned other) {
-    if (n > len)n = len;
-    for (unsigned i = 0; i < n; ++i)data4[i] = p[i];
-    if (other && n > 1)data4[1] = 7;
+    if (n > len)
+        n = len;
+    for (unsigned i = 0; i < n; ++i)
+        data4[i] = p[i];
+    if (other && n > 1)
+        data4[1] = 7;
     phase4 = 2;
     status_ep4 = 0;
     three4 = 1;
@@ -158,7 +164,8 @@ static int handle4(void) {
 }
 
 static void poll4(void) {
-    if (!live4)return;
+    if (!live4)
+        return;
     unsigned count = rd4(U_CNT) & 0xfffc;
     if (count > sizeof(ring4)) {
         puts0("[USB4] event count overflow; run usbstart again\n");
@@ -190,29 +197,35 @@ static void poll4(void) {
             } else if (type == 2) {
                 ++connects4;
                 val("[USB4] connect speed", rd4(U_DSTS) & 7, 1);
-            }
-            else if (type == 0) {
+            } else if (type == 0) {
                 config4 = 0;
                 puts0("[USB4] disconnect\n");
-                if (phase4 != 1)ok = 0;
+                if (phase4 != 1)
+                    ok = 0;
             }
-            else if (type == 9 || type == 11)ok = 0;
+            else if (type == 9 || type == 11)
+                ok = 0;
         } else {
             unsigned ep = (e >> 1) & 31, type = (e >> 6) & 15, s = (e >> 12) & 15;
-            if (ep > 1) continue;
+            if (ep > 1)
+                continue;
             if (type == 1) {
-                if ((s & 1) || (trb4[3] & 1))ok = 0;
+                if ((s & 1) || (trb4[3] & 1))
+                    ok = 0;
                 else if (phase4 == 1 && ep == 0) {
-                    if ((trb4[2] & 0xffffff) != 0)ok = 0;
-                    else ok = handle4();
+                    if ((trb4[2] & 0xffffff) != 0)
+                        ok = 0;
+                    else
+                        ok = handle4();
                 } else if (phase4 == 2 && ep == 1) {
                     phase4 = 3;
-                }
-                else if (phase4 == 4 && ep == status_ep4) {
-                    if (config4)puts0("[USB4] configured\n");
+                } else if (phase4 == 4 && ep == status_ep4) {
+                    if (config4)
+                        puts0("[USB4] configured\n");
                     ok = arm4();
                 }
-                else ok = 0;
+                else
+                    ok = 0;
             } else if (type == 3 && (s & 3) == 2 && phase4 == 3 && ep == status_ep4)ok = status4(ep);
         }
         if (!ok) {
@@ -242,7 +255,8 @@ static void usbstart4(void) {
     uint64_t t = ticks4();
     while (!(rd4(U_DSTS) & U_HALT)) {
         unsigned n = rd4(U_CNT) & 0xfffc;
-        if (n && n <= 256)wr4(U_CNT, n);
+        if (n && n <= 256)
+            wr4(U_CNT, n);
         if (ticks4() - t > (SYS(CNTFRQ_EL0) / 1000) * 500) {
             puts0("[USB4] stop timeout; power cycle to MaskROM\n");
             return;
@@ -251,7 +265,8 @@ static void usbstart4(void) {
     delay4(300);
     puts0("[USB4] device soft reset\n");
     wr4(U_DCTL, U_RESET);
-    if (!wait4(U_DCTL, U_RESET, 0, 500))return;
+    if (!wait4(U_DCTL, U_RESET, 0, 500))
+        return;
     delay4(50);
     wr4(0xc110, (rd4(0xc110) & ~((3U << 12) | (1U << 11))) | (2U << 12));
     /* Keep board PHY routing; don't gate USB2 PHY during endpoint commands. */
@@ -259,8 +274,10 @@ static void usbstart4(void) {
     wr4(U_DCFG, rd4(U_DCFG) & ~((127U << 3) | 7U | (1U << 22)));
     wr4(0xc720, 0);
     unsigned n = rd4(U_CNT) & 0xfffc;
-    if (n)wr4(U_CNT, n);
-    for (unsigned i = 0; i < 64; ++i)ring4[i] = 0;
+    if (n)
+        wr4(U_CNT, n);
+    for (unsigned i = 0; i < 64; ++i)
+        ring4[i] = 0;
     cursor4 = 0;
     config4 = 0;
     setups4 = resets4 = connects4 = 0;
@@ -269,13 +286,15 @@ static void usbstart4(void) {
     wr4(0xc404, (uint32_t)(a >> 32));
     wr4(0xc408, 0x80000100);
     wr4(0xc708, 7);
-    if (!cmd4(0, 9, 0, 0, 0))return;
+    if (!cmd4(0, 9, 0, 0, 0))
+        return;
     for (unsigned ep = 0; ep < 2; ++ep) {
         if (!cmd4(ep, 1, 64 << 3, (ep << 25) | (1 << 8) | (1 << 10), 0) ||
            !cmd4(ep, 2, 1, 0, 0))return;
     }
     wr4(0xc720, 3);
-    if (!arm4())return;
+    if (!arm4())
+        return;
     live4 = 1;
     wr4(U_DCTL, rd4(U_DCTL) | U_RUN);
     puts0("[USB4] RUN; host should enumerate 1209:0001 (private test PID)\n");
