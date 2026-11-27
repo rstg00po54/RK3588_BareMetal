@@ -250,8 +250,8 @@ static void cmd(const char *s){
     else if(*s)out("Unknown command\n");
 }
 void boot_main(void){
-    char line[64];unsigned n=0;
-    out("\n[SRAM] OpenBoot SRAM v0.3.1\n");
+    char line[64];unsigned n=0,last_cr=0;
+    out("\n[SRAM] OpenBoot SRAM v0.3.2\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
     rx_pad_snapshot();
@@ -287,9 +287,14 @@ void boot_main(void){
         if(lsr&0x1e)val("\n[UART] RX error LSR = ",lsr);
         if(c<32 && c!='\r' && c!='\n' && c!=8)
             val("\n[UART] nonprintable RX = ",c);
+        /* CR and LF are both valid Enter keys. Suppress only the LF
+         * immediately following CR so a CRLF terminal gets one prompt. */
+        if(c=='\n' && last_cr){last_cr=0;continue;}
+        last_cr=(c=='\r');
         if(c=='\r'||c=='\n'){
-            if(!n)continue;
-            out("\n");line[n]=0;cmd(line);n=0;out("cc@SRAM:~$ ");
+            out("\n");
+            if(n){line[n]=0;cmd(line);n=0;}
+            out("cc@SRAM:~$ ");
         }else if(c==8||c==127){if(n){--n;out("\b \b");}}
         else if(c>=32&&c<127&&n<sizeof(line)-1){line[n++]=(char)c;tx((char)c);}
     }
