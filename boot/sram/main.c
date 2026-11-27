@@ -236,7 +236,7 @@ void boot_fatal(uint64_t esr,uint64_t elr,uint64_t far){
     for(;;)__asm__ volatile("wfe");
 }
 static void cmd(const char *s){
-    if(eq(s,"help"))out("help info test uart rxmon timer timerinit usb usbstart usbstat usbstop usbload loadstat load run\n");
+    if(eq(s,"help"))out("help info test uart rxmon timer timerinit usb usbstart usbstat usbstop usbload update usbremote usbtrace loadstat load run\n");
     else if(eq(s,"info"))info();
     else if(eq(s,"test"))test();
     else if(eq(s,"uart"))uart_diag();
@@ -254,23 +254,42 @@ static void cmd(const char *s){
     else if(eq(s,"usbstart"))usbstart4();
     else if(eq(s,"usbstat"))usbstat4();
     else if(eq(s,"usbstop"))(void)usb_stop_for_jump4();
-    else if(eq(s,"usbload"))upload_arm4();
+    else if(eq(s,"usbload")||eq(s,"update"))(void)upload_arm4();
+    else if(eq(s,"usbremote")){
+        remote_enabled=!remote_enabled;
+        if(!remote_enabled)upload_abort4();
+        out(remote_enabled?"[USB] remote update ON\n":"[USB] remote update OFF\n");
+    }
+    else if(eq(s,"usbtrace")){
+        usb_trace=!usb_trace;
+        out(usb_trace?"[USB] setup trace ON\n":"[USB] setup trace OFF\n");
+    }
     else if(eq(s,"loadstat"))upload_status4();
     else if(eq(s,"load"))load();
     else if(eq(s,"run"))run();
     else if(*s)out("Unknown command\n");
 }
 void boot_main(void){
-    char line[64];unsigned n=0,last_cr=0;
-    out("\n[SRAM] OpenBoot SRAM v0.4.0\n");
+    char line[64],history[4][64];
+    unsigned n=0,last_cr=0,esc=0,hcount=0,hnext=0,hpos=0;
+    out("\n[SRAM] OpenBoot SRAM v0.5.0\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
     rx_pad_snapshot();
     out("[RX] sampling retained; reports OFF (rxmon toggles)\n");
+    /* Only auto-start on a verified running counter (warm A/B jump).
+     * Cold timer MMIO was previously intermittent; keep UART recovery. */
+    if(SYS(CNTFRQ_EL0)==24000000 && counter_moves()){
+        timer_ok=1;
+        out("[SRAM] warm counter; auto USB start\n");
+        usbstart4();
+    }else out("[SRAM] cold start: timerinit then usbstart\n");
+    out("cc@SRAM:~$ ");
     unsigned idle=0;
     for(;;){
         rx_sample();
         if(live4)poll4();
+        if(remote_run){remote_run=0;out("\n[UPLOAD] remote RUN\n");run();out("cc@SRAM:~$ ");}
         if(++idle==500000U){
             idle=0;
             if(rx_windows<12 || rx_bytes || rx_errors || gpio_changes){
@@ -296,15 +315,38 @@ void boot_main(void){
         ++rx_bytes;
         unsigned c=ur(0)&255;
         if(lsr&0x1e)val("\n[UART] RX error LSR = ",lsr);
-        if(c<32 && c!='\r' && c!='\n' && c!=8)
-            val("\n[UART] nonprintable RX = ",c);
+        if(c==3){
+            n=0;esc=0;last_cr=0;hpos=0;out("^C\ncc@SRAM:~$ ");continue;
+        }
+        if(c==27){esc=1;continue;}
+        if(esc==1){esc=(c=='['||c=='O')?2:0;continue;}
+        if(esc==2){
+            esc=0;
+            if(c=='A'||c=='B'){
+                if(c=='A' && hpos<hcount)++hpos;
+                else if(c=='B' && hpos)--hpos;
+                while(n){out("\b \b");--n;}
+                if(hpos){
+                    const char *p=history[(hnext+4-hpos)%4];
+                    while(*p && n<sizeof(line)-1){line[n++]=*p;tx(*p++);}
+                }
+            }
+            continue;
+        }
+        if(c<32 && c!='\r' && c!='\n' && c!=8)continue;
         /* CR and LF are both valid Enter keys. Suppress only the LF
          * immediately following CR so a CRLF terminal gets one prompt. */
         if(c=='\n' && last_cr){last_cr=0;continue;}
         last_cr=(c=='\r');
         if(c=='\r'||c=='\n'){
             out("\n");
-            if(n){line[n]=0;cmd(line);n=0;}
+            if(n){
+                line[n]=0;
+                for(unsigned i=0;i<=n;++i)history[hnext][i]=line[i];
+                hnext=(hnext+1)%4;if(hcount<4)++hcount;
+                cmd(line);n=0;
+            }
+            hpos=0;
             out("cc@SRAM:~$ ");
         }else if(c==8||c==127){if(n){--n;out("\b \b");}}
         else if(c>=32&&c<127&&n<sizeof(line)-1){line[n++]=(char)c;tx((char)c);}
