@@ -5,7 +5,7 @@ CFLAGS ?= -O2
 D := boot/ddr_cold
 O := out/host/ddr-cold
 WARN := -std=c11 -Wall -Wextra -Werror -UNDEBUG
-TESTS := $(addprefix $(O)/,dfi switch ca geometry posttrain ctl528 phy528 train528)
+TESTS := $(addprefix $(O)/,dfi switch ca geometry posttrain ctl528 phy528 train528 mode8)
 .PHONY: all test clean
 all: $(TESTS)
 $(O):
@@ -26,6 +26,8 @@ $(O)/phy528: $(D)/phy528.c $(D)/test_phy528.c $(D)/cold_steps.h | $(O)
 	$(CC) $(CFLAGS) $(WARN) $(filter %.c,$^) -o $@
 $(O)/train528: $(D)/train528.c $(D)/test_train528.c $(D)/ca_scan.c $(D)/dfi_fragments.c $(D)/train528.h $(D)/cold_steps.h | $(O)
 	$(CC) $(CFLAGS) $(WARN) $(filter %.c,$^) -o $@
+$(O)/mode8: $(D)/train528_mode8.c $(D)/test_train528_mode8.c $(D)/train528_mode8.h $(D)/cold_steps.h | $(O)
+	$(CC) $(CFLAGS) $(WARN) $(filter %.c,$^) -o $@
 test: all
 	$(O)/dfi
 	$(O)/switch
@@ -37,5 +39,7 @@ test: all
 	$(PYTHON) $(D)/test_phy528_vectors.py $(O)/phy528
 	$(O)/train528
 	$(PYTHON) $(D)/test_train528_vectors.py $(O)/train528
+	$(O)/mode8
+	$(PYTHON) $(D)/test_mode8_vectors.py $(O)/mode8
 clean:
 	rm -rf $(O)
