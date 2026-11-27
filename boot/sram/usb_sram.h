@@ -1,5 +1,5 @@
 /* SRAM phase 1: experimental HS/FS EP0-only device. Test VID/PID 1209:0001 is NOT unique
- * and must not be used on distributed products. No storage or bulk protocol.
+ * and must not be used on distributed products. EP0 staged SRAM image upload; no storage or bulk protocol.
  * Inherit OTG0 board clocks/PHY from BootROM, reset device core on command.
  */
 #define USB 0xfc000000UL
@@ -18,6 +18,76 @@ static unsigned cursor4, phase4, config4, live4, status_ep4, three4;
 static unsigned setups4, resets4, connects4;
 /* Once we touch the inherited device, require a confirmed halt before a jump. */
 static unsigned usb_owned;
+/* USB upload must be armed by local UART. A verified image is never
+ * auto-executed. Only the inactive 64 KiB SRAM slot is writable. */
+static unsigned upload_arm,upload_state,upload_size,upload_done;
+static uint32_t upload_crc;
+static unsigned upload_pending,upload_offset,upload_len;
+static unsigned config_reported;
+static uint32_t crc_byte(uint32_t crc,unsigned c);
+static void upload_abort4(void){
+    if(upload_arm || upload_state==1 || upload_pending==0x54){
+        loaded=0;
+        upload_state=0;
+    }
+    upload_arm=0;upload_pending=0;
+}
+static void upload_arm4(void){
+    if(!live4 || !config4 || !alternate() || (SYS(SCTLR_EL3)&5)){
+        out("[UPLOAD] USB not configured or unsafe slot\n");return;
+    }
+    loaded=0;upload_state=0;upload_size=upload_done=0;upload_crc=0;
+    upload_pending=0;upload_arm=1;
+    out("[UPLOAD] armed; host may stage one image\n");
+}
+static void upload_status4(void){
+    val("[UPLOAD] armed = ",upload_arm);
+    val("[UPLOAD] state = ",upload_state);
+    val("[UPLOAD] size = ",upload_size);
+    val("[UPLOAD] received = ",upload_done);
+    val("[UPLOAD] verified entry = ",loaded);
+}
+static int upload_apply4(void){
+    /* called only after the OUT data stage completes */
+    unsigned op=upload_pending;
+    upload_pending=0;
+    if(!upload_arm || !alternate() || (SYS(SCTLR_EL3)&5))return 0;
+    if(op==0x52){
+        uint32_t size=0,crc=0;
+        for(unsigned i=0;i<4;++i){
+            size|=(uint32_t)data4[i]<<(8*i);
+            crc|=(uint32_t)data4[i+4]<<(8*i);
+        }
+        if(upload_state!=0 || size<4 || size>SLOT_SIZE || (size&3))return 0;
+        loaded=0;upload_size=size;upload_crc=crc;upload_done=0;upload_state=1;
+        return 1;
+    }
+    if(op==0x53){
+        if(upload_state!=1 || upload_offset!=upload_done ||
+           upload_len>upload_size-upload_done)return 0;
+        volatile unsigned char *dst=(volatile unsigned char *)alternate();
+        for(unsigned i=0;i<upload_len;++i)dst[upload_done+i]=data4[i];
+        upload_done+=upload_len;
+        return 1;
+    }
+    return 0;
+}
+static int upload_verify4(void){
+    if(!upload_arm || upload_state!=1 || upload_done!=upload_size ||
+       !alternate() || (SYS(SCTLR_EL3)&5))return 0;
+    volatile const unsigned char *src=(volatile const unsigned char *)alternate();
+    uint32_t crc=0xffffffffU;
+    __asm__ volatile("dsb sy" ::: "memory");
+    for(unsigned i=0;i<upload_size;++i)crc=crc_byte(crc,src[i]);
+    crc^=0xffffffffU;
+    upload_arm=0;
+    if(crc!=upload_crc){
+        upload_state=3;loaded=0;
+        out("[UPLOAD] SRAM CRC32 FAIL\n");return 0;
+    }
+    upload_state=2; /* loaded becomes valid only after status stage */
+    return 1;
+}
 static void usb_put(char c){if(c=='\n')tx('\r');tx(c);}
 static void usb_hex(uint64_t v,unsigned digits){
     const char *d="0123456789ABCDEF";
@@ -121,6 +191,30 @@ static int handle4(void) {
     unsigned bm = setup4[0], req = setup4[1], v = setup4[2] | (setup4[3] << 8),
              idx = setup4[4] | (setup4[5] << 8), len = setup4[6] | (setup4[7] << 8);
     ++setups4;
+    /* SRAM upload requests: 0x52 header, 0x53 sequential <=64B,
+     * 0x54 verify, 0x55 read-only status. USB wire data uses little endian.
+     * No host-chosen pointer, no writes to running slot, no remote run. */
+    if(bm==0xc0 && req==0x55 && !v && !idx && len && config4){
+        unsigned char status[16];
+        uint32_t words[4]={upload_state,upload_size,upload_done,upload_crc};
+        for(unsigned j=0;j<4;++j)
+            for(unsigned i=0;i<4;++i)status[j*4+i]=(unsigned char)(words[j]>>(8*i));
+        return reply4(status,sizeof(status),len,0);
+    }
+    if(bm==0x40 && config4 && upload_arm && !(SYS(SCTLR_EL3)&5)){
+        if((req==0x52 && !v && !idx && len==8 && upload_state==0) ||
+           (req==0x53 && !idx && len && len<=64 && upload_state==1 &&
+            v==upload_done && len<=upload_size-upload_done)){
+            upload_pending=req;upload_offset=v;upload_len=len;
+            phase4=5;status_ep4=1;three4=1;
+            /* DWC3 OUT data TRB must have maxpacket-rounded length. */
+            return xfer4(0,data4,64,5);
+        }
+        if(req==0x54 && !v && !idx && !len && upload_verify4()){
+            upload_pending=0x54;phase4=3;status_ep4=1;three4=0;
+            return 1;
+        }
+    }
     /* Read-only vendor ping; no arbitrary address, DMA or image writes. */
     if(bm==0xc0 && req==0x51 && !v && !idx && len && config4){
         static const unsigned char pong[]={ 'S','R','A','M','U','S','B','1' };
@@ -154,7 +248,8 @@ static int handle4(void) {
         return 1;
     }
     if (bm == 0 && req == 9 && v <= 1 && !idx && !len) {
-        config4 = v;
+        if(!v)upload_abort4();
+        config4 = v;config_reported=0;
         phase4 = 3;
         status_ep4 = 1;
         three4 = 0;
@@ -189,7 +284,7 @@ static void poll4(void) {
     unsigned count = rd4(U_CNT) & 0xfffc;
     if (count > sizeof(ring4)) {
         out("[USB4] event count overflow; run usbstart again\n");
-        live4 = 0;
+        upload_abort4();live4 = 0;
         return;
     }
     for (unsigned i = 0; i < count / 4; ++i) {
@@ -201,12 +296,13 @@ static void poll4(void) {
         if (e & 1) {
             if ((e & 0xfe) != 0) {
                 out("[USB4] unsupported non-device event\n");
-                live4 = 0;
+                upload_abort4();live4 = 0;
                 return;
             }
             unsigned type = (e >> 8) & 15;
             if (type == 1) {
                 ++resets4;
+                upload_abort4();config_reported=0;
                 config4 = 0;
                 wr4(U_DCFG, rd4(U_DCFG) & ~(127U << 3));
                 out("[USB4] bus reset\n");
@@ -218,6 +314,7 @@ static void poll4(void) {
                 ++connects4;
                 usb_val("[USB4] connect speed", rd4(U_DSTS) & 7, 1);
             } else if (type == 0) {
+                upload_abort4();config_reported=0;
                 config4 = 0;
                 out("[USB4] disconnect\n");
                 if (phase4 != 1)
@@ -237,11 +334,22 @@ static void poll4(void) {
                         ok = 0;
                     else
                         ok = handle4();
+                } else if(phase4==5 && ep==0){
+                    unsigned remain=trb4[2]&0xffffff;
+                    if(remain>64 || 64-remain!=upload_len || !upload_apply4()){
+                        upload_abort4();ok=reject4();
+                    }else phase4=3;
                 } else if (phase4 == 2 && ep == 1) {
                     phase4 = 3;
                 } else if (phase4 == 4 && ep == status_ep4) {
-                    if (config4)
-                        out("[USB4] configured\n");
+                    if(upload_pending==0x54){
+                        upload_pending=0;
+                        loaded=alternate();
+                        out("[UPLOAD] SRAM CRC32 PASS; run manually\n");
+                    }
+                    if(config4 && !config_reported){
+                        config_reported=1;out("[USB4] configured\n");
+                    }
                     ok = arm4();
                 }
                 else
@@ -249,6 +357,7 @@ static void poll4(void) {
             } else if (type == 3 && (s & 3) == 2 && phase4 == 3 && ep == status_ep4)ok = status4(ep);
         }
         if (!ok) {
+            upload_abort4();
             usb_val("[USB4] transfer/state failure event", e, 8);
             live4 = 0;
             out("Run usbstart again to reset USB\n");
@@ -266,7 +375,7 @@ static void usb_handoff_regs4(void){
     usb_val("[USB4] EP0 IN DEPCMD",rd4(0xc81c),8);
 }
 static int usb_halt4(void){
-    live4=0;
+    upload_abort4();live4=0;
     if(!usb_owned)return 1;
     wr4(U_DCTL,rd4(U_DCTL)&~(U_RUN|U_RESET|(1U<<19)));
     uint64_t t=ticks4(),limit=(SYS(CNTFRQ_EL0)/1000)*500;
@@ -341,7 +450,7 @@ static void usbstart4(void) {
     for (unsigned i = 0; i < 64; ++i)
         ring4[i] = 0;
     cursor4 = 0;
-    config4 = 0;
+    config4 = 0;config_reported=0;
     setups4 = resets4 = connects4 = 0;
     uint64_t a = (uintptr_t)ring4;
     wr4(0xc400, (uint32_t)a);
@@ -372,6 +481,7 @@ static void usbstat4(void) {
     usb_val("connects", connects4, 8);
     usb_val("event cursor", cursor4, 2);
     if(usb_owned)usb_handoff_regs4();
+    upload_status4();
 }
 
 /* Snapshot: no register writes and no dereference of inherited DMA pointers. */
@@ -387,4 +497,17 @@ static void usb_snapshot4(void){
         if(!probe32(USB+offs[i],&v)){out("ABORT\n");return;}
         usb_hex(v,8);out("\n");
     }
+}
+
+static int usb_stop_for_jump4(void){
+    if(!usb_owned)return 1;
+    if(usb_halt4())return 1;
+    out("[USB4] stop fallback: device reset\n");
+    wr4(U_DCTL,U_RESET);
+    if(!wait4(U_DCTL,U_RESET,0,500)||!wait4(U_DSTS,U_HALT,U_HALT,500)){
+        usb_handoff_regs4();return 0;
+    }
+    usb_owned=0;config4=0;
+    out("[USB4] reset and halt confirmed\n");
+    return 1;
 }
