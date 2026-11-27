@@ -283,3 +283,96 @@ static void ddr_stage0(void){
     if(!ddr_regs(0xfd8d8000UL,pmu2_regs,sizeof(pmu2_regs)/sizeof(pmu2_regs[0])))return;
     out("[DDR S0] cold branch established; no DDR writes performed\n");
 }
+
+/* Cold prefix experiment, channel 0 only. DDR v1.18:
+ * 0x9e24 -> 0x89dc -> 0xbad8 (temporary global clocks)
+ * 0x8a44 -> 0x17bc (24 MHz bypass branch, bank A)
+ * 0x8a78..0x8b44 reset prefix; stop BEFORE 0x8b5c -> 0x6aac.
+ * It leaves the DDR channel in a partial reset/config state.
+ * Never execute on initialized DDR. No DDR address access.
+ */
+static unsigned ddr_prefix_attempted;
+static void ddr_prefix_wr(uintptr_t a,uint32_t v){
+    usb_val("[DDR S1] write address",a,8);
+    usb_val("[DDR S1] value",v,8);
+    for(unsigned i=0;i<1000000U;++i)if(ur(0x14)&0x40)break;
+    *(volatile uint32_t *)a=v;
+    __asm__ volatile("dsb sy" ::: "memory");
+    out("[DDR S1] write complete\n");
+}
+static int ddr_prefix_delay(unsigned us){
+    uint64_t t=SYS(CNTPCT_EL0);
+    for(unsigned i=0;i<1000000U;++i)
+        if(SYS(CNTPCT_EL0)-t>=24ULL*us)return 1;
+    out("[DDR S1] timer stalled\n");return 0;
+}
+static int ddr_prefix_guard(void){
+    uint32_t v;
+    if(!alternate() || SYS(CurrentEL)!=12 || (SYS(SCTLR_EL3)&5) ||
+       !timer_ok || SYS(CNTFRQ_EL0)!=24000000 || !counter_moves())return 0;
+    for(unsigned i=0;i<4;++i){
+        if(!probe32(0xfd58a208UL+4*i,&v)||v)return 0;
+    }
+    if(!probe32(0xf7010014UL,&v)||(v&7))return 0;
+    if(!probe32(0xfd8d8110UL,&v)||v)return 0;
+    for(unsigned ch=0;ch<4;++ch){
+        uintptr_t b=0xfd800000UL+ch*0x4000UL;
+        if(!probe32(b,&v)||v!=0x8073U ||
+           !probe32(b+4,&v)||v!=1U ||
+           !probe32(b+0x20,&v)||v!=0x8073U ||
+           !probe32(b+0x24,&v)||v!=1U)return 0;
+    }
+    return 1;
+}
+static void ddr_stage1(void){
+    const uintptr_t cru=0xfd7c0000UL,phycru=0xfd800000UL,grf=0xfd59c000UL;
+    uint32_t mode,sel;
+    out("[DDR S1] experimental CH0 24MHz/reset prefix; cold only\n");
+    if(ddr_prefix_attempted || upload_arm || upload_pending || upload_state==1 ||
+       !usb_owned || !ddr_prefix_guard()){
+        out("[DDR S1] guard failed; refuse writes\n");return;
+    }
+    if(!probe32(cru+0x280,&mode)||!probe32(cru+0x304,&sel)){
+        out("[DDR S1] clock save ABORT\n");return;
+    }
+    usb_val("[DDR S1] saved MODE_CON",mode,8);
+    usb_val("[DDR S1] saved CLKSEL1",sel,8);
+    if(!usb_stop_for_jump4()){out("[DDR S1] USB halt failed\n");return;}
+    ddr_prefix_attempted=1;
+    /* Vendor bad8 temporary CPLL mode and CLKSEL1 fields. */
+    ddr_prefix_wr(cru+0x280,0x03000000U);
+    ddr_prefix_wr(cru+0x304,0x0fc009c0U);
+    /* 24 MHz reference bypass for the cold boot A bank (descriptor fc=0). */
+    ddr_prefix_wr(phycru+0x000,0x80008000U);
+    ddr_prefix_wr(phycru+0xa00,0x00160016U);
+    if(!ddr_prefix_delay(10))goto fail;
+    ddr_prefix_wr(phycru+0xa00,0x00100000U);
+    ddr_prefix_wr(cru+0xa50,0x00400040U);
+    ddr_prefix_wr(grf+0x130,0x00080000U);
+    ddr_prefix_wr(phycru+0xa00,0x00040000U);
+    if(!ddr_prefix_delay(5))goto fail;
+    ddr_prefix_wr(grf+0x130,0x00080008U);
+    if(!ddr_prefix_delay(5))goto fail;
+    ddr_prefix_wr(phycru+0xa00,0x00020000U);
+    /* 0x175c, channel 0, w2=1: reset bits 7,8,12. */
+    ddr_prefix_wr(cru+0xa50,0x11801180U);
+    if(!ddr_prefix_delay(5))goto fail;
+    ddr_prefix_wr(cru+0xa50,0x00400000U);
+    if(!ddr_prefix_delay(5))goto fail;
+    ddr_prefix_wr(grf+0x130,0x00080000U);
+    ddr_prefix_wr(phycru+0xa00,0x00020002U);
+    /* Isolated test: restore only the temporary global clock fields.
+     * Do not claim that the reset state is equivalent to the full vendor path. */
+    ddr_prefix_wr(cru+0x280,0x03000000U|(mode&0x300U));
+    ddr_prefix_wr(cru+0x304,0x0fc00000U|(sel&0xfc0U));
+    out("[DDR S1] write prefix complete; DDR NOT initialized\n");
+    if(!ddr_read("MODE_CON",cru+0x280)||!ddr_read("CLKSEL1",cru+0x304)||
+       !ddr_read("CRU_SOFTRST",cru+0xa50)||
+       !ddr_read("PHY_CRU_RESET",phycru+0xa00)||
+       !ddr_read("DDR_GRF_RAW130",grf+0x130))goto fail;
+    out("[DDR S1] restart USB; partial DDR state, no DRAM accesses\n");
+    usbstart4();
+    return;
+fail:
+    out("[DDR S1] STOP: partial hardware state; cold power cycle required\n");
+}
