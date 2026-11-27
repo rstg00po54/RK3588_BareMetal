@@ -4,6 +4,7 @@
 #define SLOT_B 0xff011000UL
 #define SLOT_SIZE 0x10000U
 #define CHUNK 128U
+extern int probe32(uintptr_t addr,uint32_t *value);
 extern __attribute__((visibility("hidden"))) char _start[], __stack_top[], __image_end[];
 static uintptr_t loaded;
 static int timer_ok;
@@ -37,6 +38,42 @@ static void uart_diag(void){
     val("[UART] LSR = ",ur(0x14));
     val("[UART] USR = ",ur(0x7c));
     val("[UART] RFL = ",ur(0x84));
+}
+static int rx_gpio_available;
+static unsigned gpio_high,gpio_low,gpio_changes,gpio_last;
+static unsigned rx_bytes,rx_errors,rx_windows;
+static void rx_pad_snapshot(void){
+    val("[RX] PMU2 mux = ",*(volatile uint32_t *)0xfd5f4000UL);
+    val("[RX] BUS mux = ",*(volatile uint32_t *)0xfd5f800cUL);
+    val("[RX] GPIO0B pull = ",*(volatile uint32_t *)0xfd5f4028UL);
+    val("[RX] GPIO0B pdis = ",*(volatile uint32_t *)0xfd5f404cUL);
+    uint32_t v;
+    out("[RX] probe GPIO0 EXT_PORT (read only)\n");
+    if(probe32(0xfd8a0070UL,&v)){
+        rx_gpio_available=1;
+        gpio_last=(v>>14)&1;
+        val("[RX] GPIO0 EXT_PORT = ",v);
+    }else out("[RX] GPIO read abort; UART monitoring only\n");
+}
+static void rx_sample(void){
+    if(rx_gpio_available){
+        unsigned b=(*(volatile uint32_t *)0xfd8a0070UL>>14)&1;
+        if(b)++gpio_high;else ++gpio_low;
+        if(b!=gpio_last)++gpio_changes;
+        gpio_last=b;
+    }
+}
+static void rx_report(void){
+    out("\n[RX] monitor; hold a key in terminal\n");
+    val("uart bytes = ",rx_bytes);
+    val("uart errors = ",rx_errors);
+    if(rx_gpio_available){
+        val("GPIO0_B6 high samples = ",gpio_high);
+        val("GPIO0_B6 low samples = ",gpio_low);
+        val("GPIO0_B6 changes = ",gpio_changes);
+    }
+    gpio_high=gpio_low=gpio_changes=rx_bytes=rx_errors=0;
+    uart_diag();
 }
 static void uart_rx_init(void){
     /* SDK ioc_rk3588.h: PMU2 GPIO0B IE at +0x34.
@@ -198,22 +235,29 @@ static void cmd(const char *s){
 }
 void boot_main(void){
     char line[64];unsigned n=0;
-    out("\n[SRAM] OpenBoot SRAM v0.2.2\n");
+    out("\n[SRAM] OpenBoot SRAM v0.2.3\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
-    unsigned idle=0, reports=0;
+    rx_pad_snapshot();
+    out("[RX] hold U in terminal; automatic monitor enabled\n");
+    unsigned idle=0;
     for(;;){
+        rx_sample();
+        if(++idle==500000U){
+            idle=0;
+            if(rx_windows<12 || rx_bytes || rx_errors || gpio_changes){
+                ++rx_windows;
+                rx_report();
+                out("cc@SRAM:~$ ");
+            }
+        }
         unsigned lsr=ur(0x14);
+        if(lsr&0x1e)++rx_errors;
         if(!(lsr&1)){
             if(lsr&0x1e)val("\n[UART] RX error LSR = ",lsr);
-            if(reports<3 && ++idle==10000000U){
-                ++reports;idle=0;
-                out("\n[UART] idle: waiting for RX\n");
-                uart_diag();out("cc@SRAM:~$ ");
-            }
             continue;
         }
-        idle=0;reports=3;
+        ++rx_bytes;
         unsigned c=ur(0)&255;
         if(lsr&0x1e)val("\n[UART] RX error LSR = ",lsr);
         if(c<32 && c!='\r' && c!='\n' && c!=8)
