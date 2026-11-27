@@ -129,9 +129,10 @@ For LPDDR4X the first 41b8 call at 9e9c uses w6=16
 41b8 is a larger training/probe routine; precise training meaning
 of each mode not established. Do not label it a specific JEDEC training
 operation until its body has been decoded.
-9f9c performs MRR rank1 MR14; tests result 4d for LPDDR4 or 5d for
-LPDDR4X; otherwise follows 9f28 MR14 write and another 41b8 call
-at 9f6c with w6=8. Error handling depends on channel and result.
+9f9c performs MRR rank1 MR14; result 4d for LPDDR4 or 5d for
+LPDDR4X takes the failure branch 9fb8 (w26=-1); otherwise follows
+9f28 MR14 write and another 41b8 call at 9f6c with w6=8.
+Error handling depends on channel and result.
 a06c calls MRR rank1 MR8. Type7/8 branch a080..a0f0 updates geometry:
     G+8=3, G+4=10, G+10=1
     G+18=14+((((MR8>>2)&15)+1)>>1)
@@ -158,3 +159,5 @@ firmware integration, no claim of DDR/DFI/training hardware success.
 Next focus: reconstruct 32a0 and 6214 actual cold paths; decode
 41b8 and remaining geometry/second-pass init. Keep the existing board
 in its partial prefix state; no new board operations requested.
+
+Second training and MR8 geometry follow-up: [ddr-training-41b8-mode8-geometry.md](ddr-training-41b8-mode8-geometry.md).
