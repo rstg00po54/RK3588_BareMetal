@@ -1,7 +1,7 @@
 CROSS_COMPILE ?= aarch64-linux-gnu-
 OUT := out/sram-app
 APP ?= boot/sram_app/hello.c
-CFLAGS := -Os -ffreestanding -fpie -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -mgeneral-regs-only
+CFLAGS := -Os -ffreestanding -fpie -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -mgeneral-regs-only -mstrict-align
 .PHONY: all clean FORCE
 all: $(OUT)/app.bin
 $(OUT):
@@ -32,7 +32,7 @@ $(OUT)/probe%.bin: $(OUT)/probe%.elf
 
 .PHONY: ddr
 ddr: $(OUT)/ddr-probe.bin
-$(OUT)/ddr-probe.o: boot/sram_app/ddr_probe.c boot/sram/app_abi.h | $(OUT)
+$(OUT)/ddr-probe.o: boot/sram_app/ddr_probe.c boot/sram/app_abi.h boot/sram-app.mk | $(OUT)
 	$(CROSS_COMPILE)gcc $(CFLAGS) -c -o $@ $<
 $(OUT)/ddr-probe.elf: $(OUT)/entry.o $(OUT)/ddr-probe.o boot/sram_app/link.ld
 	$(CROSS_COMPILE)ld -T boot/sram_app/link.ld -o $@ $(OUT)/entry.o $(OUT)/ddr-probe.o
