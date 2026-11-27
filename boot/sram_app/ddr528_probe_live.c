@@ -28,13 +28,46 @@ static int allowed(uintptr_t a){
         if(a==0xfd7c0000UL+4*(0x294+ch+ch/2)||a==(ch<2?0xfd59c000UL:0xfd59d000UL)+0x130+(ch&1)*4)return 1;
     }return 0;
 }
+#ifdef DDR528_COMPACT_TRACE
+/* Print a complete short breadcrumb BEFORE each new transaction and an
+ * explicit completion marker AFTER it. Keep every write visible. */
+static void hex32(uint32_t x){
+    for(int j=28;j>=0;j-=4)tx("0123456789ABCDEF"[(x>>j)&15]);
+}
+static void trace_stage(const struct ctx *c){
+    static unsigned old=~0U,oldch=~0U;
+    unsigned stage=c->state.stage==P528_FIRST ? (0x100U+(unsigned)c->state.first.stage) : (unsigned)c->state.stage;
+    unsigned ch=c->state.stage==P528_FIRST ? c->state.first.ch : c->state.ch;
+    if(stage!=old||ch!=oldch){
+        puts1("S ");hex32(stage);puts1(" CH ");hex32(ch);puts1("\n");
+        old=stage;oldch=ch;
+    }
+}
+#endif
 static uint32_t rd(void *v,uintptr_t a){struct ctx *c=v;if(!allowed(a)){val("[DDR528] invalid read ",a);stop("STOP\n");}
-    unsigned same=c->have&&c->last==a;if(!same){val("[DDR528] R ",a);flush();}
-    uint32_t x=raw(a);if(!same||x!=c->previous)val(" = ",x);c->last=a;c->previous=x;c->have=1;return x;
+    unsigned same=c->have&&c->last==a;
+#ifdef DDR528_COMPACT_TRACE
+    trace_stage(c);
+    if(!same){puts1("R ");hex32((uint32_t)a);puts1("\n");flush();}
+    uint32_t x=raw(a);
+    if(!same||x!=c->previous){puts1("= ");hex32(x);puts1("\n");}
+#else
+    if(!same){val("[DDR528] R ",a);flush();}
+    uint32_t x=raw(a);if(!same||x!=c->previous)val(" = ",x);
+#endif
+    c->last=a;c->previous=x;c->have=1;return x;
 }
 static void wr(void *v,uintptr_t a,uint32_t x){struct ctx *c=v;if(!c->write_enabled||!allowed(a))stop("[DDR528] WRITE BLOCKED\n");
+#ifdef DDR528_COMPACT_TRACE
+    trace_stage(c);puts1("W ");hex32((uint32_t)a);tx(' ');hex32(x);puts1("\n");flush();
+#else
     if(c->state.stage==P528_FIRST){val("[DDR528] first stage ",c->state.first.stage);val("ch ",c->state.first.ch);}else{val("[DDR528] probe stage ",c->state.stage);val("ch ",c->state.ch);}val("W ",a);val("value ",x);flush();
-    *(volatile uint32_t*)a=x;__asm__ volatile("dsb sy":::"memory");c->have=0;
+#endif
+    *(volatile uint32_t*)a=x;__asm__ volatile("dsb sy":::"memory");
+#ifdef DDR528_COMPACT_TRACE
+    puts1("OK\n");flush();
+#endif
+    c->have=0;
 }
 static void delay(void *v,unsigned us){(void)v;uint64_t t=SYS(CNTPCT_EL0);for(unsigned j=0;j<1000000;j++)if(SYS(CNTPCT_EL0)-t>=24ULL*us)return;stop("[DDR528] timer stalled\n");}
 #ifdef DDR528_COLD_SIGNATURE
@@ -68,6 +101,9 @@ static void mr14_diag(const struct cold_io *io,const struct probe528_result *r){
 #endif
 void ddr528_live_main(void){
     puts1("[DDR528 PROBE LIVE] standalone SRAM; USB must be halted by Monitor run\n");
+#ifdef DDR528_COMPACT_TRACE
+    puts1("[DDR528] compact trace v1; W then OK; S 0x100+first stage or probe stage\n");
+#endif
     if(SYS(CurrentEL)!=12||(SYS(SCTLR_EL3)&5)||SYS(CNTFRQ_EL0)!=24000000)stop("[DDR528] unsafe CPU context\n");
     delay(0,1);struct ctx c={0};struct cold_io io={&c,rd,wr,delay};struct cold528_snapshot snap;
     if(cold528_snapshot(&io,&snap)){val("[DDR528] faults ",snap.faults);stop("[DDR528] REFUSE; cold reset required\n");}
