@@ -27,7 +27,10 @@ def framed(raw):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("image", type=pathlib.Path)
+    p.add_argument("--timeout-ms", type=int, default=10000)
     a = p.parse_args()
+    if not 100 <= a.timeout_ms <= 60000:
+        p.error("timeout must be 100..60000 ms")
     raw = a.image.read_bytes()
     data = framed(raw)
     name = ctypes.util.find_library("usb-1.0")
@@ -49,10 +52,14 @@ def main():
     desc = bind("libusb_get_device_descriptor", I, P, C.POINTER(Descriptor))
     op = bind("libusb_open", I, P, C.POINTER(P))
     close = bind("libusb_close", None, P)
+    claim = bind("libusb_claim_interface", I, P, I)
+    release = bind("libusb_release_interface", I, P, I)
+    get_config = bind("libusb_get_configuration", I, P, C.POINTER(I))
     ctrl = bind("libusb_control_transfer", I, P, U8, U8, U16, U16,
                 C.POINTER(U8), U16, C.c_uint)
     error = bind("libusb_error_name", C.c_char_p, I)
     ctx, handle = P(), P()
+    claimed = False
     rc = init(C.byref(ctx))
     if rc < 0:
         raise RuntimeError(error(rc).decode())
@@ -76,13 +83,25 @@ def main():
                 raise RuntimeError(error(rc).decode())
         finally:
             free(devices,1)
+        config = I()
+        rc = get_config(handle, C.byref(config))
+        if rc < 0:
+            raise RuntimeError("get configuration: " + error(rc).decode())
+        print(f"Active USB configuration={config.value}", flush=True)
+        if config.value != 1:
+            raise RuntimeError("expected configuration 1; reconnect in MaskROM")
+        rc = claim(handle, 0)
+        if rc < 0:
+            raise RuntimeError("claim interface 0: " + error(rc).decode())
+        claimed = True
+        print("Interface 0 claimed", flush=True)
         print(f"CODE471 raw={len(raw)} framed={len(data)} CRC=0x{data[-2:].hex()}",flush=True)
         for off in range(0,len(data),4096):
             part=data[off:off+4096]
             final=off+len(part)==len(data)
             buf=(U8*len(part)).from_buffer_copy(part)
             print(f"TX 0x471 offset=0x{off:05x} bytes={len(part)} final={final}",flush=True)
-            rc=ctrl(handle,0x40,0x0c,0,0x0471,buf,len(part),3000)
+            rc=ctrl(handle,0x40,0x0c,0,0x0471,buf,len(part),a.timeout_ms)
             if rc!=len(part):
                 detail=error(rc).decode() if rc<0 else f"short transfer: {rc}"
                 print(f"USB transfer not acknowledged: {detail}",file=sys.stderr,flush=True)
@@ -94,6 +113,8 @@ def main():
         return 0
     finally:
         if handle:
+            if claimed:
+                release(handle, 0)
             close(handle)
         exit_usb(ctx)
 
