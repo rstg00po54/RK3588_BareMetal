@@ -154,6 +154,44 @@ static int wait_slot(libusb_context *ctx,uint32_t target,uint8_t bus,
     fputs("RUN not confirmed: check USB passthrough and UART. Do not resend blindly.\n",stderr);
     return 0;
 }
+static int upload(libusb_device_handle *h,size_t n,uint32_t crc);
+static int app_status(libusb_device_handle *h,uint32_t a[4]){
+    unsigned char b[16];
+    if(!req(h,0xc0,0x5a,0,b,sizeof b))return 0;
+    for(unsigned i=0;i<4;++i)a[i]=get32(b+4*i);
+    return a[0]==1;
+}
+static int exec_app(libusb_device_handle *h,size_t n,uint32_t crc){
+    unsigned char dummy=0;
+    uint32_t a[4],info[4];
+    if(n<20 || n>0xf000 || get32(image)!=0x31504153U ||
+       get32(image+4)!=1 || get32(image+8)!=16 || get32(image+12)!=0){
+        fputs("Use an ABI 1 SAP1 app.bin (not monitor firmware)\n",stderr);return 0;
+    }
+    if(!api_info(h,info)||!info[3]||!app_status(h,a)||a[3]!=info[1]){
+        fputs("exec requires Monitor v0.6.0+ and remote enabled\n",stderr);return 0;
+    }
+    double t=monotime();
+    if(!req(h,0x40,0x56,0,&dummy,0)||!upload(h,n,crc))return 0;
+    double e=monotime();
+    if(!req(h,0x40,0x59,0,&dummy,0)){
+        fputs("APP execute acknowledgement uncertain; do not retry blindly\n",stderr);return 0;
+    }
+    for(unsigned i=0;i<100 && monotime()-e<3.0;++i){
+        if(!app_status(h,a)||a[3]!=info[1])break;
+        if(a[1]==2){
+            if(!ping(h))return 0;
+            printf("APP RETURN PASS; result=0x%08" PRIx32 "; monitor slot=0x%08" PRIx32 "\n",a[2],a[3]);
+            printf("APP upload + execute + return: %.3f s; execute + return: %.3f s; same USB handle\n",monotime()-t,monotime()-e);
+            return 1;
+        }
+        if(a[1]==3)break;
+        struct timespec delay={0,10000000};
+        nanosleep(&delay,NULL);
+    }
+    fputs("APP return not confirmed; check UART. Do not resend blindly.\n",stderr);
+    return 0;
+}
 static int read_image(const char *path,size_t *n)
 {
     FILE *f=fopen(path,"rb");
@@ -203,7 +241,7 @@ static int upload(libusb_device_handle *h,size_t n,uint32_t crc)
 static void usage(const char *name)
 {
     printf("Usage:\n  %s ping\n  %s status\n  %s upload sram.bin\n"
-           "  %s run sram.bin\n  %s selftest\n",name,name,name,name,name);
+           "  %s run sram.bin\n  %s exec app.bin\n  %s selftest\n",name,name,name,name,name,name);
 }
 int main(int argc,char **argv)
 {
@@ -224,6 +262,7 @@ int main(int argc,char **argv)
     if(argc==2 && !strcmp(argv[1],"status"))mode=2;
     if(argc==3 && !strcmp(argv[1],"upload"))mode=3;
     if(argc==3 && !strcmp(argv[1],"run"))mode=4;
+    if(argc==3 && !strcmp(argv[1],"exec"))mode=5;
     if(!mode){usage(argv[0]);return 2;}
     size_t n=0;uint32_t crc=0;
     if(mode>=3){
@@ -246,9 +285,12 @@ int main(int argc,char **argv)
     else if(mode==3){
         ok=upload(h,n,crc);
         if(ok)puts("Use UART: loadstat, then run.");
+    }else if(mode==5){
+        ok=exec_app(h,n,crc);
     }else{
         uint32_t info[4];
         unsigned char dummy=0;
+        if(get32(image)==0x31504153U){fputs("Use exec for SAP1 application images\n",stderr);goto done;}
         if(!api_info(h,info) || !info[3]){
             fputs("Remote run needs SRAM API 2 and usbremote ON. Use manual upload on v0.4.0.\n",stderr);
             goto done;
