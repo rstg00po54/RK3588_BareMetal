@@ -27,6 +27,50 @@ static uintptr_t alternate(void) {
     uintptr_t a=(uintptr_t)_start;
     return a==SLOT_A?SLOT_B:a==SLOT_B?SLOT_A:0;
 }
+static void uw(unsigned o,uint32_t v){
+    *(volatile uint32_t *)(UART+o)=v;
+    __asm__ volatile("dsb sy" ::: "memory");
+}
+static void uart_diag(void){
+    val("[UART] LCR = ",ur(0x0c));
+    val("[UART] MCR = ",ur(0x10));
+    val("[UART] LSR = ",ur(0x14));
+    val("[UART] USR = ",ur(0x7c));
+    val("[UART] RFL = ",ur(0x84));
+}
+static void uart_rx_init(void){
+    /* SDK ioc_rk3588.h: PMU2 GPIO0B IE at +0x34.
+     * GPIO0_B6 is UART2_RX_M0. Use the per-pin bit-6 hiword mask. */
+    volatile uint32_t *ie=(volatile uint32_t *)0xfd5f4034UL;
+    val("[UART] GPIO0B IE before = ",*ie);
+    *ie=0x00400040U;
+    __asm__ volatile("dsb sy" ::: "memory");
+    val("[UART] GPIO0B IE after = ",*ie);
+    /* ns16550 U-Boot init: DTR/RTS, no auto flow control. */
+    for(unsigned i=0;i<1000000;++i)if(ur(0x14)&0x40)break;
+    uw(0x0c,3);
+    uw(4,0);
+    uw(0x10,3);
+    uw(8,7);
+    uart_diag();
+    /* Test local UART TX->RX with MCR loopback. Restore before logging. */
+    for(unsigned i=0;i<1000000;++i)if(ur(0x14)&0x40)break;
+    uw(0x10,0x13);
+    uw(8,7);
+    int received=-1;
+    if(ur(0x14)&0x20){
+        uw(0,0x55);
+        for(unsigned i=0;i<1000000;++i){
+            if(ur(0x14)&1){received=ur(0)&255;break;}
+        }
+    }
+    for(unsigned i=0;i<1000000;++i)if(ur(0x14)&0x40)break;
+    uw(0x10,3);
+    uw(8,7);
+    out(received==0x55?"[UART] INTERNAL LOOPBACK PASS\n":"[UART] INTERNAL LOOPBACK FAIL\n");
+    if(received>=0)val("[UART] loopback byte = ",(unsigned)received);
+    out("[UART] RX ready: type help\n");
+}
 static void timer_write(unsigned off,uint32_t v){
     val("[TIMER] write address = ",0xfd8c8000UL+off);
     val("[TIMER] value = ",v);
@@ -142,9 +186,10 @@ void boot_fatal(uint64_t esr,uint64_t elr,uint64_t far){
     for(;;)__asm__ volatile("wfe");
 }
 static void cmd(const char *s){
-    if(eq(s,"help"))out("help info test timer timerinit load run\n");
+    if(eq(s,"help"))out("help info test uart timer timerinit load run\n");
     else if(eq(s,"info"))info();
     else if(eq(s,"test"))test();
+    else if(eq(s,"uart"))uart_diag();
     else if(eq(s,"timer"))timer_info();
     else if(eq(s,"timerinit"))timer_init();
     else if(eq(s,"load"))load();
@@ -153,12 +198,26 @@ static void cmd(const char *s){
 }
 void boot_main(void){
     char line[64];unsigned n=0;
-    out("\n[SRAM] OpenBoot SRAM v0.2.1\n");
+    out("\n[SRAM] OpenBoot SRAM v0.2.2\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
-    info();test();out("[SRAM] READY\ncc@SRAM:~$ ");
+    info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
+    unsigned idle=0, reports=0;
     for(;;){
-        if(!(ur(0x14)&1))continue;
+        unsigned lsr=ur(0x14);
+        if(!(lsr&1)){
+            if(lsr&0x1e)val("\n[UART] RX error LSR = ",lsr);
+            if(reports<3 && ++idle==10000000U){
+                ++reports;idle=0;
+                out("\n[UART] idle: waiting for RX\n");
+                uart_diag();out("cc@SRAM:~$ ");
+            }
+            continue;
+        }
+        idle=0;reports=3;
         unsigned c=ur(0)&255;
+        if(lsr&0x1e)val("\n[UART] RX error LSR = ",lsr);
+        if(c<32 && c!='\r' && c!='\n' && c!=8)
+            val("\n[UART] nonprintable RX = ",c);
         if(c=='\r'||c=='\n'){
             if(!n)continue;
             out("\n");line[n]=0;cmd(line);n=0;out("cc@SRAM:~$ ");
