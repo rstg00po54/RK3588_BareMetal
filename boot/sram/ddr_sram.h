@@ -248,102 +248,38 @@ static void ddr_preflight(void){
     out("[DDR PRE] complete; cold initialization NOT attempted\n");
 }
 
-/* First write experiment only: vendor DDR v1.18 file offsets 0xced0..0xcf34.
- * Mirrors cold_global_handshake in boot/ddr_cold/cold_steps.c, with explicit
- * step tracing and abort handling. This is not DDR initialization.
- * The register block's complete semantics are not yet established.
+/* Vendor v1.18 main function 0x9a2c..0x9a54:
+ * LDR DDRCTL0 base; LDR STAT at +0x10014; TST #7; B.EQ 0x9a54.
+ * The 0xced0 PMU power-cycle sequence is called ONLY if STAT[2:0] != 0.
+ * The preceding message string at 0x10c17 is "pd/pu vd_ddr".
+ * A truly cold start skips it. Never power-cycle live DDR from this shell.
  */
-static unsigned ddr_handshake_attempted;
-static void ddr_flush(void){
+static void ddr_stage0(void){
+    uint32_t stat;
+    out("[DDR S0] read-only; vendor cold/warm branch check\n");
+    out("DDRCTL0 STAT @ 0xF7010014 = ");
     for(unsigned i=0;i<1000000U;++i)if(ur(0x14)&0x40)break;
-}
-static void ddr_handshake_write(unsigned off,uint32_t v){
-    uintptr_t a=0xfd8d8000UL+off;
-    usb_val("[DDR HS] write address",a,8);
-    usb_val("[DDR HS] write value",v,8);
-    ddr_flush();
-    *(volatile uint32_t *)a=v;
-    __asm__ volatile("dsb sy" ::: "memory");
-    out("[DDR HS] write complete\n");
-}
-static int ddr_handshake_wait(unsigned off,uint32_t mask,int set){
-    uintptr_t a=0xfd8d8000UL+off;
-    usb_val("[DDR HS] poll address",a,8);
-    usb_val("[DDR HS] mask",mask,8);
-    out(set?"[DDR HS] wait any set\n":"[DDR HS] wait all clear\n");
-    ddr_flush();
-    uint64_t start=SYS(CNTPCT_EL0);
-    uint32_t v=0;
-    for(unsigned i=0;i<1000000U;++i){
-        if(!probe32(a,&v)){out("[DDR HS] read ABORT\n");return 0;}
-        if((!!(v&mask))==set){
-            usb_val("[DDR HS] match",v,8);return 1;
-        }
-        if(SYS(CNTPCT_EL0)-start>=2400000ULL)break;
+    if(!probe32(0xf7010014UL,&stat)){
+        out("ABORT; cannot establish vendor branch\n");return;
     }
-    usb_val("[DDR HS] timeout last",v,8);
-    return 0;
-}
-static int ddr_cold_guard(void){
-    uint32_t v,a,b,c;
-    /* Scratch flags are not proof of cold state. Also require the observed
-     * cold PLL values and handshake signature. Operator must have booted
-     * independent CODE471 without any vendor DDR stage since power-on. */
-    if(!alternate() || SYS(CurrentEL)!=12 || (SYS(SCTLR_EL3)&5) ||
-       !timer_ok || SYS(CNTFRQ_EL0)!=24000000 || !counter_moves())
-        return 0;
-    for(unsigned i=0;i<4;++i){
-        if(!probe32(0xfd58a208UL+4*i,&v) || v)return 0;
+    usb_hex(stat,8);out("\n");
+    if(stat&7){
+        out("[DDR S0] STAT[2:0] nonzero; vendor would power-cycle DDR\n");
+        out("[DDR S0] REFUSE: independent cold state not established\n");
+        return;
     }
-    for(unsigned ch=0;ch<4;++ch){
-        uintptr_t base=0xfd800000UL+ch*0x4000UL;
-        if(!probe32(base,&v) || v!=0x8073U ||
-           !probe32(base+4,&v) || v!=1U ||
-           !probe32(base+0x20,&v) || v!=0x8073U ||
-           !probe32(base+0x24,&v) || v!=1U)return 0;
-    }
-    if(!probe32(0xfd8d8118UL,&a) || !probe32(0xfd8d8120UL,&b) ||
-       !probe32(0xfd8d8184UL,&c))return 0;
-    return a==0xf023ffffU && b==0x0023ffffU && c==0;
-}
-static void ddr_handshake(void){
-    out("[DDR HS] experimental cold handshake ONLY; no PLL/PHY/CTL programming\n");
-    if(ddr_handshake_attempted){
-        out("[DDR HS] already attempted; cold power cycle before retry\n");return;
-    }
-    if(upload_arm || upload_pending || upload_state==1){
-        out("[DDR HS] upload active; refuse\n");return;
-    }
-    if(!ddr_cold_guard()){
-        out("[DDR HS] cold signature mismatch; refuse writes\n");return;
-    }
-    /* Quiesce our USB DMA before global hardware state changes. */
-    if(!usb_owned){
-        out("[DDR HS] start our USB first to establish controller ownership\n");return;
-    }
-    if(!usb_stop_for_jump4()){
-        out("[DDR HS] cannot halt USB; refuse writes\n");return;
-    }
-    ddr_handshake_attempted=1;
-    ddr_handshake_write(0x110,0xf000f000U);
-    if(!ddr_handshake_wait(0x118,0xf0000000U,1))goto fail;
-    if(!ddr_handshake_wait(0x120,0xf0000000U,1))goto fail;
-    ddr_handshake_write(0x160,0x00030003U);
-    ddr_handshake_write(0x154,0x00030003U);
-    if(!ddr_handshake_wait(0x184,3,1))goto fail;
-    ddr_handshake_write(0x154,0x00030000U);
-    if(!ddr_handshake_wait(0x184,3,0))goto fail;
-    ddr_handshake_write(0x160,0x00030000U);
-    ddr_handshake_write(0x110,0xf0000000U);
-    out("[DDR HS] sequence PASS (DDR NOT initialized)\n");
-    if(!ddr_read("HANDSHAKE_118",0xfd8d8118UL) ||
-       !ddr_read("HANDSHAKE_120",0xfd8d8120UL) ||
-       !ddr_read("HANDSHAKE_184",0xfd8d8184UL))goto fail;
-    if(timer_ok && counter_moves()){
-        out("[DDR HS] restart USB\n");usbstart4();
-    }else out("[DDR HS] counter stalled; USB remains off\n");
-    return;
-fail:
-    out("[DDR HS] STOP: partial hardware state; power cycle before retry\n");
-    /* No guessed rollback and no USB restart in unknown state. */
+    out("[DDR S0] STAT[2:0] = 0; skip PMU power-cycle as vendor does\n");
+    /* Read only named PMU2 registers to document the starting state. */
+    static const struct ddr_reg pmu2_regs[]={
+        {0x110,"BUS_IDLE_SFTCON1"},
+        {0x118,"BUS_IDLE_ACK0"},
+        {0x120,"BUS_IDLE_ST0"},
+        {0x154,"PWR_GATE_SFTCON2"},
+        {0x160,"VOL_GATE_CON2"},
+        {0x180,"PWR_GATE_ST0"},
+        {0x184,"PWR_GATE_ST1"},
+        {0x1d8,"QCHANNEL_STATUS"},
+    };
+    if(!ddr_regs(0xfd8d8000UL,pmu2_regs,sizeof(pmu2_regs)/sizeof(pmu2_regs[0])))return;
+    out("[DDR S0] cold branch established; no DDR writes performed\n");
 }
