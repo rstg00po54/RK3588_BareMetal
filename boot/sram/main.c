@@ -171,6 +171,7 @@ static uint32_t crc_byte(uint32_t crc,unsigned c){
 }
 static void load(void){
     if(usb_owned){out("ERR USB ACTIVE; usb stop first (usbstop)\n");return;}
+    upload_abort4();upload_state=0;upload_size=upload_done=0;upload_crc=0;
     uint32_t size,want,crc=0xffffffffU;
     uintptr_t a=alternate();
     loaded=0;
@@ -197,8 +198,16 @@ static void load(void){
     out("OK\n");
 }
 static void run(void){
-    if(usb_owned){out("ERR USB ACTIVE; usbstop first\n");return;}
-    if(!loaded){out("ERR NO IMAGE\n");return;}
+    if(!loaded || loaded!=alternate() || (SYS(SCTLR_EL3)&5)){
+        out("ERR NO VERIFIED IMAGE OR UNSAFE SLOT\n");return;
+    }
+    if(!usb_stop_for_jump4())return;
+    if(upload_state==2){
+        uint32_t crc=0xffffffffU;
+        volatile const unsigned char *src=(volatile const unsigned char *)loaded;
+        for(unsigned i=0;i<upload_size;++i)crc=crc_byte(crc,src[i]);
+        if((crc^0xffffffffU)!=upload_crc){loaded=0;upload_state=3;out("ERR FINAL CRC\n");return;}
+    }
     uintptr_t a=loaded;loaded=0;
     out("JUMP\n");
     for(unsigned i=0;i<1000000;++i)if(ur(0x14)&0x40)break;
@@ -227,7 +236,7 @@ void boot_fatal(uint64_t esr,uint64_t elr,uint64_t far){
     for(;;)__asm__ volatile("wfe");
 }
 static void cmd(const char *s){
-    if(eq(s,"help"))out("help info test uart rxmon timer timerinit usb usbstart usbstat usbstop load run\n");
+    if(eq(s,"help"))out("help info test uart rxmon timer timerinit usb usbstart usbstat usbstop usbload loadstat load run\n");
     else if(eq(s,"info"))info();
     else if(eq(s,"test"))test();
     else if(eq(s,"uart"))uart_diag();
@@ -244,14 +253,16 @@ static void cmd(const char *s){
     else if(eq(s,"usb"))usb_snapshot4();
     else if(eq(s,"usbstart"))usbstart4();
     else if(eq(s,"usbstat"))usbstat4();
-    else if(eq(s,"usbstop"))(void)usb_halt4();
+    else if(eq(s,"usbstop"))(void)usb_stop_for_jump4();
+    else if(eq(s,"usbload"))upload_arm4();
+    else if(eq(s,"loadstat"))upload_status4();
     else if(eq(s,"load"))load();
     else if(eq(s,"run"))run();
     else if(*s)out("Unknown command\n");
 }
 void boot_main(void){
     char line[64];unsigned n=0,last_cr=0;
-    out("\n[SRAM] OpenBoot SRAM v0.3.2\n");
+    out("\n[SRAM] OpenBoot SRAM v0.4.0\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
     rx_pad_snapshot();
