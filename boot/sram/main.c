@@ -237,9 +237,9 @@ void boot_fatal(uint64_t esr,uint64_t elr,uint64_t far){
     for(;;)__asm__ volatile("wfe");
 }
 static void cmd(const char *s){
-    if(eq(s,"help"))out("help info test uart rxmon timer timerinit usb usbstart usbstat usbstop usbload update usbremote usbtrace loadstat load run\nddrpre ddrhandshake ddr ddr0..3 ddrclk0..3 ddrphy0..3\n");
+    if(eq(s,"help"))out("help info test uart rxmon timer timerinit usb usbstart usbstat usbstop usbload update usbremote usbtrace loadstat load run\nddrpre ddrstage0 ddr ddr0..3 ddrclk0..3 ddrphy0..3\n");
     else if(eq(s,"ddrpre"))ddr_preflight();
-    else if(eq(s,"ddrhandshake"))ddr_handshake();
+    else if(eq(s,"ddrstage0")||eq(s,"ddrhandshake"))ddr_stage0();
     else if(eq(s,"ddr"))ddr_info();
     else if(eq(s,"ddr0"))ddr_channel(0);
     else if(eq(s,"ddr1"))ddr_channel(1);
@@ -288,7 +288,7 @@ static void cmd(const char *s){
 void boot_main(void){
     char line[64],history[4][64];
     unsigned n=0,last_cr=0,esc=0,hcount=0,hnext=0,hpos=0;
-    out("\n[SRAM] OpenBoot SRAM v0.5.2\n");
+    out("\n[SRAM] OpenBoot SRAM v0.5.3\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
     rx_pad_snapshot();
