@@ -75,3 +75,19 @@ int cold_phy_ack_fragment(const struct cold_io *io,unsigned ch,unsigned polls)
     rmw(io,p+0x3c8,0x00040002,0);
     return COLD_OK;
 }
+/* 0x2dd8: MRR preamble, trigger completion and data-valid wait. */
+int cold_mrr_fragment(const struct cold_io *io,unsigned ch,unsigned rank_mask,
+                      unsigned mr,unsigned polls,uint8_t *data)
+{
+    if(!valid(io,ch,polls)||rank_mask<1||rank_mask>3||mr>255||!data)return COLD_BAD_ARG;
+    uintptr_t c=ctl(ch);
+    wr(io,c+0x80,0x01000030U);
+    if(wait_mask(io,c+0x90,1,0,polls))return COLD_TIMEOUT;
+    wr(io,c+0x80,(rank_mask<<4)|1);
+    wr(io,c+0x84,mr<<8);
+    rmw(io,c+0x80,0,0x80000000U);
+    if(wait_mask(io,c+0x80,0x80000000U,0,polls))return COLD_TIMEOUT;
+    if(wait_mask(io,c+0x90,0x10000,0x10000,polls))return COLD_TIMEOUT;
+    *data=(uint8_t)rd(io,c+0x94);
+    return COLD_OK;
+}
