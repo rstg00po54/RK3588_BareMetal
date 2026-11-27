@@ -21,12 +21,14 @@ static void tx(char c) {
 }
 
 static void put(char c) {
-    if (c == '\n') tx('\r');
+    if (c == '\n')
+        tx('\r');
     tx(c);
 }
 
 static void puts0(const char *s) {
-    while (*s) put(*s++);
+    while (*s)
+        put(*s++);
 }
 
 static void hex(uint64_t x, unsigned n) {
@@ -66,7 +68,8 @@ void boot_fatal(uint64_t esr, uint64_t elr, uint64_t far) {
     val("ESR", esr, 16);
     val("ELR", elr, 16);
     val("FAR", far, 16);
-    for (;;) __asm__ volatile("wfe");
+    for (;;)
+        __asm__ volatile("wfe");
 }
 
 static int readreg(const char *name, unsigned off, uint32_t *v) {
@@ -86,12 +89,14 @@ static int readreg(const char *name, unsigned off, uint32_t *v) {
 static void usb(void) {
     uint32_t v;
     puts0("[USB] read-only OTG0 snapshot; no reset or event acknowledgement\n");
-    if (!readreg("GSNPSID", 0xc120, &v)) return;
+    if (!readreg("GSNPSID", 0xc120, &v))
+        return;
     if ((v >> 16) != 0x5533 && (v >> 16) != 0x3331) {
         puts0("Unknown core ID; stopping\n");
         return;
     }
-    if (readreg("GCTL", 0xc110, &v)) val("  port capability", (v >> 12) & 3, 1);
+    if (readreg("GCTL", 0xc110, &v))
+        val("  port capability", (v >> 12) & 3, 1);
     readreg("GSTS", 0xc118, &v);
     readreg("GHWPARAMS0", 0xc140, &v);
     readreg("GHWPARAMS1", 0xc144, &v);
@@ -102,8 +107,10 @@ static void usb(void) {
     readreg("GEVNTADRHI0", 0xc404, &v);
     readreg("GEVNTSIZ0", 0xc408, &v);
     readreg("GEVNTCOUNT0", 0xc40c, &v);
-    if (readreg("DCFG", 0xc700, &v)) val("  device address", (v >> 3) & 127, 2);
-    if (readreg("DCTL", 0xc704, &v)) val("  run/stop", v >> 31, 1);
+    if (readreg("DCFG", 0xc700, &v))
+        val("  device address", (v >> 3) & 127, 2);
+    if (readreg("DCTL", 0xc704, &v))
+        val("  run/stop", v >> 31, 1);
     readreg("DEVTEN", 0xc708, &v);
     if (readreg("DSTS", 0xc70c, &v)) {
         val("  speed code", v & 7, 1);
@@ -142,8 +149,10 @@ static void events(void) {
             return;
         }
         hex(word, 8);
-        if ((off & 15) == 12 || off + 4 == bytes) put('\n');
-        else put(' ');
+        if ((off & 15) == 12 || off + 4 == bytes)
+            put('\n');
+        else
+            put(' ');
     }
     __asm__ volatile("dsb sy"::: "memory");
     if (readreg("GEVNTCOUNT after", 0xc40c, &after) &&
@@ -152,7 +161,8 @@ static void events(void) {
         readreg("GEVNTSIZ after", 0xc408, &sz2)) {
         if (after != count || lo2 != lo || hi2 != hi || sz2 != sz)
             puts0("[EVENTS] state changed during capture\n");
-        else puts0("[EVENTS] registers stable; ring entries may still be stale\n");
+        else
+            puts0("[EVENTS] registers stable; ring entries may still be stale\n");
     }
 }
 
@@ -171,25 +181,32 @@ static void ep(void) {
 }
 
 static int eq(const char *a, const char *b) {
-    while (*a && *a == * b) {
+    while (*a && *a == *b) {
         ++a;
         ++b;
     }
-    return *a == * b;
+    return *a == *b;
 }
 
 static void command(const char *s) {
-    if (eq(s, "help")) puts0("help cpu usb events ep uart echo\n");
-    else if (eq(s, "cpu")) cpu();
-    else if (eq(s, "usb")) usb();
-    else if (eq(s, "events")) events();
-    else if (eq(s, "ep")) ep();
+    if (eq(s, "help"))
+        puts0("help cpu usb events ep uart echo\n");
+    else if (eq(s, "cpu"))
+        cpu();
+    else if (eq(s, "usb"))
+        usb();
+    else if (eq(s, "events"))
+        events();
+    else if (eq(s, "ep"))
+        ep();
     else if (eq(s, "uart")) {
         val("LCR", ur(0x0c), 8);
         val("LSR", ur(0x14), 8);
     }
-    else if (eq(s, "echo")) puts0("UART RX OK\n");
-    else if (*s) puts0("Unknown command\n");
+    else if (eq(s, "echo"))
+        puts0("UART RX OK\n");
+    else if (*s)
+        puts0("Unknown command\n");
 }
 
 void boot_main(void) {
@@ -197,11 +214,12 @@ void boot_main(void) {
     unsigned n = 0;
     int cr = 0;
     puts0("\n[RK3588] OpenBoot v0.3 C ENTRY OK\n");
-    puts0(bss_test == 0 ? "[BOOT] BSS zero PASS\n": "[BOOT] BSS zero FAIL\n");
+    puts0(bss_test == 0 ? "[BOOT] BSS zero PASS\n" : "[BOOT] BSS zero FAIL\n");
     cpu();
     puts0("[UART] type help; USB remains untouched until diagnostic commands\ncc@RK3588:~$ ");
     for (;;) {
-        if (!(ur(0x14) & 1)) continue;
+        if (!(ur(0x14) & 1))
+            continue;
         unsigned char c = (unsigned char)ur(0);
         if (c == '\n' && cr) {
             cr = 0;
@@ -214,14 +232,12 @@ void boot_main(void) {
             command(line);
             n = 0;
             puts0("cc@RK3588:~$ ");
-        }
-        else if (c == 8 || c == 127) {
+        } else if (c == 8 || c == 127) {
             if (n) {
                 --n;
                 puts0("\b \b");
             }
-        }
-        else if (c >= 32 && c < 127 && n < sizeof(line) - 1) {
+        } else if (c >= 32 && c < 127 && n < sizeof(line) - 1) {
             line[n++] = (char)c;
             put((char)c);
         }
