@@ -213,11 +213,24 @@ static void run_app(void){
         app_state=3;loaded=0;upload_state=3;
         out("[APP] FINAL CRC FAIL\n");return;
     }
-    struct sram_app_api api={SRAM_APP_ABI,sizeof(api),out,app_ticks};
-    uintptr_t base=loaded;
+    /* Force runtime pointer stores, not an absolute-link-address template
+     * copied from .data.rel.ro by the compiler. Monitor is linked at 0. */
+    volatile struct sram_app_api api;
+    api.abi=SRAM_APP_ABI;api.size=sizeof(api);
+    api.puts=out;api.ticks=app_ticks;
+    uintptr_t base=loaded,mon=(uintptr_t)_start,end=(uintptr_t)__image_end;
+    val("[APP] entry = ",base+SRAM_APP_ENTRY);
+    val("[APP] stack top = ",base+SLOT_SIZE);
+    val("[APP] api = ",(uintptr_t)&api);
+    val("[APP] puts = ",(uintptr_t)api.puts);
+    val("[APP] ticks = ",(uintptr_t)api.ticks);
+    if((uintptr_t)api.puts<mon || (uintptr_t)api.puts>=end ||
+       (uintptr_t)api.ticks<mon || (uintptr_t)api.ticks>=end){
+        app_state=3;out("[APP] callback outside monitor; refuse call\n");return;
+    }
     out("[APP] call; USB remains running\n");
     __asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
-    app_result=app_call(base+SRAM_APP_ENTRY,base+SLOT_SIZE,&api);
+    app_result=app_call(base+SRAM_APP_ENTRY,base+SLOT_SIZE,(const struct sram_app_api *)&api);
     app_state=2;
     val("[APP] returned = ",app_result);
 }
@@ -315,7 +328,7 @@ static void cmd(const char *s){
 void boot_main(void){
     char line[64],history[4][64];
     unsigned n=0,last_cr=0,esc=0,hcount=0,hnext=0,hpos=0;
-    out("\n[SRAM] OpenBoot SRAM Monitor v0.6.0\n");
+    out("\n[SRAM] OpenBoot SRAM Monitor v0.6.1\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
     rx_pad_snapshot();
