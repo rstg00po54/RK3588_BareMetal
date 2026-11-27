@@ -198,9 +198,35 @@ static void load(void){
     loaded=a;
     out("OK\n");
 }
+extern uint32_t app_call(uintptr_t entry,uintptr_t stack,const struct sram_app_api *api);
+static uint64_t app_ticks(void){return SYS(CNTPCT_EL0);}
+static void run_app(void){
+    if(!app_pending)return;
+    app_pending=0;
+    if(!live4 || !config4 || !app_header_ok() || (SYS(SCTLR_EL3)&5)){
+        app_state=3;out("[APP] rejected\n");return;
+    }
+    uint32_t crc=0xffffffffU;
+    volatile const unsigned char *src=(volatile const unsigned char *)loaded;
+    for(unsigned i=0;i<upload_size;++i)crc=crc_byte(crc,src[i]);
+    if((crc^0xffffffffU)!=upload_crc){
+        app_state=3;loaded=0;upload_state=3;
+        out("[APP] FINAL CRC FAIL\n");return;
+    }
+    struct sram_app_api api={SRAM_APP_ABI,sizeof(api),out,app_ticks};
+    uintptr_t base=loaded;
+    out("[APP] call; USB remains running\n");
+    __asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
+    app_result=app_call(base+SRAM_APP_ENTRY,base+SLOT_SIZE,&api);
+    app_state=2;
+    val("[APP] returned = ",app_result);
+}
 static void run(void){
     if(!loaded || loaded!=alternate() || (SYS(SCTLR_EL3)&5)){
         out("ERR NO VERIFIED IMAGE OR UNSAFE SLOT\n");return;
+    }
+    if(*(volatile const uint32_t *)loaded==SRAM_APP_MAGIC){
+        out("ERR APP IMAGE; use sram-usb exec\n");return;
     }
     if(!usb_stop_for_jump4())return;
     if(upload_state==2){
@@ -289,7 +315,7 @@ static void cmd(const char *s){
 void boot_main(void){
     char line[64],history[4][64];
     unsigned n=0,last_cr=0,esc=0,hcount=0,hnext=0,hpos=0;
-    out("\n[SRAM] OpenBoot SRAM v0.5.4\n");
+    out("\n[SRAM] OpenBoot SRAM Monitor v0.6.0\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
     rx_pad_snapshot();
@@ -306,6 +332,7 @@ void boot_main(void){
     for(;;){
         rx_sample();
         if(live4)poll4();
+        if(app_pending)run_app();
         if(remote_run){remote_run=0;out("\n[UPLOAD] remote RUN\n");run();out("cc@SRAM:~$ ");}
         if(++idle==500000U){
             idle=0;
