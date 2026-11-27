@@ -1,12 +1,19 @@
 #include "probe528.h"
+#ifdef PROBE528_EMBEDDED
+#include "../sram/app_abi.h"
+/* An assertion in the mock is a latched failure, not an EL3 trap. */
+static volatile unsigned mock_failed __attribute__((section(".data"))) = 1;
+#define assert(x) do { if (!(x)) mock_failed=1; } while (0)
+#else
 #include <assert.h>
 #include <stdio.h>
+#endif
 struct reg {uintptr_t a;uint32_t v;};
 struct mock {struct reg r[1024];unsigned n,reads,writes,delay,started,completed,switched,checked,mr14,rank8,rank0,done;unsigned dual,width,failch;enum probe528_stage fail;struct probe528_result *s;};
 static uintptr_t b(unsigned ch){return 0xf7000000UL+ch*0x1000000UL;}
 static uintptr_t p(unsigned ch){return 0xfe0c0000UL+ch*0x10000UL;}
 static uint32_t get(struct mock *m,uintptr_t a){for(unsigned j=0;j<m->n;j++)if(m->r[j].a==a)return m->r[j].v;return 0;}
-static void set(struct mock *m,uintptr_t a,uint32_t v){unsigned j=0;while(j<m->n&&m->r[j].a!=a)j++;if(j==m->n){assert(m->n<1024);m->n++;}m->r[j]=(struct reg){a,v};}
+static void set(struct mock *m,uintptr_t a,uint32_t v){unsigned j=0;while(j<m->n&&m->r[j].a!=a)j++;if(j==m->n){if(m->n>=1024){assert(0);return;}m->n++;}m->r[j]=(struct reg){a,v};}
 static uint32_t rd(void *ctx,uintptr_t a){struct mock *m=ctx;m->reads++;uint32_t v=get(m,a);struct probe528_result *s=m->s;
     unsigned ch=s->stage==P528_FIRST?s->first.ch:s->ch;if(ch>=4)return v;
     uintptr_t c=b(ch)+0x10000,phy=p(ch),pc=0xfd800000UL+ch*0x4000UL;
@@ -52,6 +59,32 @@ static void wr(void *ctx,uintptr_t a,uint32_t v){struct mock *m=ctx;struct probe
 static void delay(void *ctx,unsigned us){((struct mock*)ctx)->delay+=us;}
 static void init(struct mock *m,struct probe528_result *s,unsigned dual,unsigned width){*m=(struct mock){.s=s,.dual=dual,.width=width,.failch=4};set(m,0xfd7c0280,0x104);set(m,0xfd7c0304,0x165);set(m,0xfd7c0594,0x80);
     for(unsigned j=0;j<4;j++){set(m,p(j),0x44005011);set(m,p(j)+0xa1c,0x20820);set(m,p(j)+0xb0,0x2000017e);set(m,p(j)+0xb8,0x2640);set(m,b(j)+0x10180,0x12340000+j);}}
+#ifdef PROBE528_EMBEDDED
+/* The ABI reserves only 4 KiB for stack: explicitly loaded .data, not BSS. */
+static struct mock embedded_mock __attribute__((section(".data"))) = {.n=1};
+static struct probe528_result embedded_result __attribute__((section(".data"))) = {.ch=4};
+uint32_t app_main(const struct sram_app_api *api){
+    if(!api||api->abi!=SRAM_APP_ABI||api->size<sizeof(*api)||!api->puts)return 0x528d00ffU;
+    struct mock *m=&embedded_mock;struct probe528_result *s=&embedded_result;
+    struct cold_io io={m,rd,wr,delay};
+    api->puts("[DDR528 DRY] SRAM-only mock; NO MMIO\n");
+    mock_failed=0;
+    for(unsigned scenario=0;scenario<3;scenario++){
+        unsigned dual=scenario!=0,width=scenario==2?2:0;init(m,s,dual,width);
+        int rc=cold_probe528(&io,4,s);
+        if(rc||mock_failed||s->stage!=P528_DONE||s->candidate_mask!=15||m->done!=15||m->mr14!=15||m->checked!=1){
+            api->puts("[DDR528 DRY] FAIL\n");return 0x528d0010U+scenario;
+        }
+        for(unsigned ch=0;ch<4;ch++){
+            struct probe528_channel *r=&s->channel[ch];
+            if(r->ca.selected!=10||r->mode8.period!=256||r->geometry.g[0]!=1+dual||r->geometry.g[6]!=16||r->geometry.g[7]!=(dual?16+(width!=0):0)||get(m,b(ch)+0x10180)!=0x12340000+ch)return 0x528d0020U+scenario;
+        }
+        if(m->rank8!=(dual?15:0)||m->rank0!=(width?15:0))return 0x528d0030U+scenario;
+        api->puts("[DDR528 DRY] four-channel scenario PASS\n");
+    }
+    api->puts("[DDR528 DRY] PASS; real DDR unchanged\n");return 0x528d0000U;
+}
+#else
 int main(void){struct mock m;struct probe528_result s;struct cold_io io={&m,rd,wr,delay};
     for(unsigned scenario=0;scenario<3;scenario++){unsigned dual=scenario!=0,width=scenario==2?2:0;init(&m,&s,dual,width);
         assert(cold_probe528(&io,4,&s)==0&&s.stage==P528_DONE&&s.candidate_mask==15&&m.done==15&&m.mr14==15&&m.checked==1);
@@ -63,3 +96,4 @@ int main(void){struct mock m;struct probe528_result s;struct cold_io io={&m,rd,w
     init(&m,&s,1,1);assert(cold_probe528(&io,4,&s)==-6&&s.stage==P528_GEOMETRY&&!s.candidate_mask);n++;
     init(&m,&s,0,0);assert(cold_probe528(&io,0,&s)==COLD_BAD_ARG&&!m.writes);printf("probe528: %u injected failures + invalid argument PASS\n",n);
 }
+#endif
