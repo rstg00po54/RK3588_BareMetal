@@ -257,6 +257,14 @@ static void poll4(void) {
     }
 }
 
+static void usb_handoff_regs4(void){
+    usb_val("[USB4] DCTL",rd4(U_DCTL),8);
+    usb_val("[USB4] DSTS",rd4(U_DSTS),8);
+    usb_val("[USB4] GEVNTCOUNT",rd4(U_CNT),8);
+    usb_val("[USB4] DALEPENA",rd4(0xc720),8);
+    usb_val("[USB4] EP0 OUT DEPCMD",rd4(0xc80c),8);
+    usb_val("[USB4] EP0 IN DEPCMD",rd4(0xc81c),8);
+}
 static int usb_halt4(void){
     live4=0;
     if(!usb_owned)return 1;
@@ -268,14 +276,14 @@ static int usb_halt4(void){
         if(n && n<=256)wr4(U_CNT,n);
         if(ticks4()-t>=limit)break;
     }
-    out("[USB4] halt timeout; reset board before jumping\n");
+    out("[USB4] halt timeout; old transfer state may be pending\n");
+    usb_handoff_regs4();
     return 0;
 }
 static void usbstart4(void) {
     if(!timer_ok || SYS(CNTFRQ_EL0)!=24000000 || !counter_moves()){
         out("[USB4] run timerinit first\n");return;
     }
-    if(usb_owned && !usb_halt4())return;
     live4 = 0;
     uint32_t id;
     if (!probe32(USB + 0xc120, &id) || id != 0x5533300a) {
@@ -298,13 +306,30 @@ static void usbstart4(void) {
     usb_val("[USB4] SRAM TRB",(uintptr_t)trb4,16);
     out("[USB4] stop old device; no PHY reset\n");
     usb_owned=1;
-    if(!usb_halt4())return;
-    usb_owned=1;
-    if(!delay4(300))return;
-    out("[USB4] device soft reset\n");
+    int halted=usb_halt4();
+    usb_owned=1; /* lock out image jumps even after a failed reset */
+    if(halted){
+        if(!delay4(300))return;
+    }else{
+        /* Cold ROM EP0 software state is unavailable. Linux core reset
+         * asserts CSFTRST with RUN_STOP cleared before event-ring setup.
+         * Do not adopt any old transfer index or overwrite old buffers.
+         * Require reset completion AND DEVCTRLHLT before installing DMA. */
+        out("[USB4] graceful halt failed; try device-only reset\n");
+    }
+    out("[USB4] device soft reset (RUN_STOP=0)\n");
     wr4(U_DCTL,U_RESET);
-    if(!wait4(U_DCTL,U_RESET,0,500))return;
-    if(!delay4(50))return;
+    if(!wait4(U_DCTL,U_RESET,0,500)){
+        usb_handoff_regs4();return;
+    }
+    out("[USB4] CSFTRST cleared\n");
+    if(!wait4(U_DSTS,U_HALT,U_HALT,500)){
+        out("[USB4] reset complete but controller not halted; refuse DMA setup\n");
+        usb_handoff_regs4();return;
+    }
+    out("[USB4] reset and halt confirmed\n");
+    usb_handoff_regs4();
+    if(!delay4(halted?50:300))return;
     wr4(0xc110, (rd4(0xc110) & ~((3U << 12) | (1U << 11))) | (2U << 12));
     /* Keep board PHY routing; don't gate USB2 PHY during endpoint commands. */
     wr4(0xc200, rd4(0xc200) & ~((1U << 6) | (1U << 31)));
@@ -346,6 +371,7 @@ static void usbstat4(void) {
     usb_val("resets", resets4, 8);
     usb_val("connects", connects4, 8);
     usb_val("event cursor", cursor4, 2);
+    if(usb_owned)usb_handoff_regs4();
 }
 
 /* Snapshot: no register writes and no dereference of inherited DMA pointers. */
