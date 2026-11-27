@@ -1,7 +1,7 @@
 /* RK3588(S) CODE472 RAM-only bring-up. UART2 inherited from DDR firmware. */
 .section .text.boot,"ax",%progbits
 .global _start
-.type _start,%function
+.type _start, %function
 _start:
     msr daifset, #0xf
     movz x19, #0xfeb5, lsl #16
@@ -21,13 +21,15 @@ _start:
     movz x22, #0x55aa
     movk x22, #0xa55a, lsl #16
     mov x23, x20
-1:  str x22, [x23], #8
+1:
+    str x22, [x23], #8
     subs w21, w21, #1
     b.ne 1b
     dsb sy
     mov w21, #16
     mov x23, x20
-2:  ldr x24, [x23], #8
+2:
+    ldr x24, [x23], #8
     cmp x24, x22
     b.ne fail
     subs w21, w21, #1
@@ -44,21 +46,25 @@ idle:
 /* x19 = UART2 base. No stack or clock/pin reconfiguration. */
 putc:
     mov w2, #0x8000
-3:  ldr w1, [x19, #0x14]
+3:
+    ldr w1, [x19, #0x14]
     tbnz w1, #5, 4f
     subs w2, w2, #1
     b.ne 3b
     ret
-4:  str w0, [x19]
+4:
+    str w0, [x19]
     ret
 puts:
     mov x9, x30
     mov x10, x0
-5:  ldrb w0, [x10], #1
+5:
+    ldrb w0, [x10], #1
     cbz w0, 6f
     bl putc
     b 5b
-6:  ret x9
+6:
+    ret x9
 banner: .asciz "\r\n[RK3588] CODE472 AARCH64 ENTRY OK\r\n"
 elmsg: .asciz "[RK3588] CurrentEL=EL"
 newline: .asciz "\r\n"
