@@ -7,6 +7,7 @@
 #include <unicorn/unicorn.h>
 #include <unicorn/arm64.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -103,7 +104,7 @@ int main(int argc,char **argv)
         fprintf(stderr,"Generator not confirmed: PC=%08" PRIx64 " ret=%08" PRIx32 "\n",pc,(uint32_t)ret);
         goto done;
     }
-    unsigned char r[0x240],p[0x94],t[4];
+    unsigned char r[0x240],p[0x94],t[0x2ac];
     if(!check(uc_mem_read(uc,R,r,sizeof r),"read R")||
        !check(uc_mem_read(uc,P,p,sizeof p),"read P")||
        !check(uc_mem_read(uc,T,t,sizeof t),"read T"))goto done;
@@ -114,6 +115,19 @@ int main(int argc,char **argv)
         fputs("Generator returned but output identity checks failed\n",stderr);goto done;
     }
     puts("OFFLINE GENERATOR RETURN PASS (not DDR hardware initialization)");
+    /* Independently decoded 0x7010 geometry, prior to any training. */
+    static const uint32_t geometry[15]={2,11,3,1,0,0,17,17,0,0,0,0,0,0,0};
+    for(unsigned ch=0;ch<4;++ch)
+        for(unsigned i=0;i<15;++i)
+            if(le32(r+ch*0x6c+i*4)!=geometry[i]){
+                fprintf(stderr,"Initial geometry mismatch: ch%u +%02x actual=%08" PRIx32 " expected=%08" PRIx32 "\n",
+                        ch,i*4,le32(r+ch*0x6c+i*4),geometry[i]);
+                goto done;
+            }
+    puts("Initial geometry matches independently decoded template");
+    printf("Timing bucket: T+1e8=%" PRIu32 " T+1ec=%" PRIu32
+           " T+1f0=%" PRIu32 " T+1f4=%" PRIu32 "\n",
+           le32(t+0x1e8),le32(t+0x1ec),le32(t+0x1f0),le32(t+0x1f4));
     ok=dump(uc,"R",R,0x358)&&dump(uc,"P",P,0x94)&&dump(uc,"T",T,0x2ac);
 done:
     uc_close(uc);
