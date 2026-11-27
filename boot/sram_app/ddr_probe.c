@@ -67,8 +67,10 @@ uint32_t app_main(const struct sram_app_api *api)
     rd(api,0xfe0c00b0UL);
     rd(api,0xfe0c00b4UL);
     rd(api,0xfe0c00b8UL);
-    /* These two offsets are accessed by vendor 0x6aac wrapper.
-     * They are raw observations, not a configuration recipe. */
+    /* Cold wrapper mode 1 calls 0x6180 with w3=0, which writes +0xbf4.
+     * Read the current value only; its vendor value is parameter-dependent. */
+    rd(api,0xfe0c0bf4UL);
+    /* Raw observations, not a configuration recipe. */
     rd(api,0xfe0c0000UL);
     rd(api,0xfe0c0a1cUL);
     api->puts("[DDR APP] snapshot complete; DDR NOT initialized\n");
