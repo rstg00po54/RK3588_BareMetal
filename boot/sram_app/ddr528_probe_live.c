@@ -44,6 +44,28 @@ static int matches(const struct cold528_snapshot *s){if(s->mode!=expected_cold.m
     for(unsigned i=0;i<4;i++)if(s->reset[i]!=expected_cold.reset[i]||s->phy_reset[i]!=expected_cold.phy_reset[i]||s->grf[i]!=expected_cold.grf[i])return 0;
     return 1;}
 #endif
+#if defined(DDR528_COLD_SIGNATURE) && defined(DDR528_MR14_DIAG)
+/* Diagnostic only after a completed CA and successful but rejected MR14.
+ * MRR issues controller commands, never MRW or DRAM address accesses.
+ * Stop at the first timeout; never resume initialization. */
+int cold_mrr_fragment(const struct cold_io *,unsigned,unsigned,unsigned,unsigned,uint8_t *);
+static void mr14_diag(const struct cold_io *io,const struct probe528_result *r){
+    static const unsigned mrs[]={14,12,5,8,14,12,14};
+    puts1("[DDR528] MR14 DIAG; CH0 rank selector 1; no MRW\n");
+    val("CA passing ",r->channel[0].ca.passing);
+    val("CA selected ",r->channel[0].ca.selected);
+    val("CA DFI ",r->channel[0].ca.dfi);
+    for(unsigned j=0;j<sizeof(mrs)/sizeof(mrs[0]);j++){
+        uint8_t v=0;
+        val("MR index ",mrs[j]);
+        int rc=cold_mrr_fragment(io,0,1,mrs[j],1000,&v);
+        val("MR read rc ",(uint32_t)rc);
+        if(rc)stop("[DDR528] MR14 DIAG timeout; cold reset required\n");
+        val("MR value ",v);
+    }
+    stop("[DDR528] MR14 DIAG complete; original rejection retained; cold reset required\n");
+}
+#endif
 void ddr528_live_main(void){
     puts1("[DDR528 PROBE LIVE] standalone SRAM; USB must be halted by Monitor run\n");
     if(SYS(CurrentEL)!=12||(SYS(SCTLR_EL3)&5)||SYS(CNTFRQ_EL0)!=24000000)stop("[DDR528] unsafe CPU context\n");
@@ -59,6 +81,10 @@ void ddr528_live_main(void){
     val("first stage ",c.state.first.stage);val("first channel ",c.state.first.ch);
     val("probe stage ",c.state.stage);val("probe channel ",c.state.ch);
     val("candidate mask ",c.state.candidate_mask);
+#ifdef DDR528_MR14_DIAG
+    if(rc==-5 && c.state.stage==P528_MR14_CHECK && c.state.ch==0)
+        mr14_diag(&io,&c.state);
+#endif
     for(unsigned ch=0;ch<4;ch++){
         if(!(c.state.candidate_mask&(1U<<ch)))continue;
         struct probe528_channel *r=&c.state.channel[ch];
