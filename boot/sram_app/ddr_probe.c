@@ -7,18 +7,27 @@
  */
 #include "../sram/app_abi.h"
 
+/* With MMU disabled, unaligned wide loads/stores can fault even when
+ * SCTLR.A is clear. Avoid compiler-generated wide literal copies. */
+static void hex32(const struct sram_app_api *api, uint32_t v)
+{
+    volatile char b[11] __attribute__((aligned(8)));
+    b[0]='0';b[1]='x';
+    for(unsigned i=0;i<8;++i){
+        unsigned n=(v>>(28-4*i))&15;
+        b[i+2]=(char)(n<10?'0'+n:'A'+n-10);
+    }
+    b[10]=0;
+    api->puts((const char *)b);
+}
 static uint32_t rd(const struct sram_app_api *api, uintptr_t a)
 {
-    char msg[]="MMIO 0x00000000 = ";
-    char result[]="0x00000000\n";
-    const char *digits="0123456789ABCDEF";
-    for(unsigned i=0;i<8;++i)
-        msg[7+i]=digits[(a>>(28-4*i))&15];
-    api->puts(msg);
+    api->puts("MMIO ");
+    hex32(api,(uint32_t)a);
+    api->puts(" = ");
     uint32_t v=*(volatile const uint32_t *)a;
-    for(unsigned i=0;i<8;++i)
-        result[2+i]=digits[(v>>(28-4*i))&15];
-    api->puts(result);
+    hex32(api,v);
+    api->puts("\n");
     return v;
 }
 uint32_t app_main(const struct sram_app_api *api)
