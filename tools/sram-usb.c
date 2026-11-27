@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/types.h>
 
 enum { MAX_IMAGE=65536, CHUNK=64, TIMEOUT=3000 };
 static unsigned char image[MAX_IMAGE+1];
@@ -109,7 +110,8 @@ static int wait_slot(libusb_context *ctx,uint32_t target,uint8_t bus,
                      const uint8_t *ports,int depth)
 {
     /* Do not resend RUN on a timeout. Wait for the new firmware instead. */
-    for(unsigned i=0;i<80;i++){
+    double deadline=monotime()+20.0;
+    for(unsigned i=0;i<80 && monotime()<deadline;i++){
         struct timespec delay={0,250000000};
         nanosleep(&delay,NULL);
         libusb_device_handle *h=open_one(ctx);
@@ -214,7 +216,7 @@ int main(int argc,char **argv)
     int rc=libusb_init(&ctx),ok=0;
     if(rc<0){fprintf(stderr,"libusb_init: %s\n",libusb_error_name(rc));return 1;}
     libusb_device_handle *h=open_one(ctx);
-    if(!h){fputs("1209:0001 not found or permission denied\n",stderr);goto done;}
+    if(!h){fputs("Need exactly one accessible 1209:0001 device\n",stderr);goto done;}
     int cfg=0;
     rc=libusb_get_configuration(h,&cfg);
     if(rc<0 || cfg!=1){fputs("USB not configured\n",stderr);goto done;}
