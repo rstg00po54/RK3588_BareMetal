@@ -5,7 +5,7 @@ CFLAGS ?= -O2
 D := boot/ddr_cold
 O := out/host/ddr-cold
 WARN := -std=c11 -Wall -Wextra -Werror -UNDEBUG
-TESTS := $(addprefix $(O)/,dfi switch ca geometry posttrain ctl528 phy528)
+TESTS := $(addprefix $(O)/,dfi switch ca geometry posttrain ctl528 phy528 train528)
 .PHONY: all test clean
 all: $(TESTS)
 $(O):
@@ -24,6 +24,8 @@ $(O)/ctl528: $(D)/ctl528.c $(D)/test_ctl528.c $(D)/cold_steps.h | $(O)
 	$(CC) $(CFLAGS) $(WARN) $(filter %.c,$^) -o $@
 $(O)/phy528: $(D)/phy528.c $(D)/test_phy528.c $(D)/cold_steps.h | $(O)
 	$(CC) $(CFLAGS) $(WARN) $(filter %.c,$^) -o $@
+$(O)/train528: $(D)/train528.c $(D)/test_train528.c $(D)/ca_scan.c $(D)/dfi_fragments.c $(D)/train528.h $(D)/cold_steps.h | $(O)
+	$(CC) $(CFLAGS) $(WARN) $(filter %.c,$^) -o $@
 test: all
 	$(O)/dfi
 	$(O)/switch
@@ -33,5 +35,7 @@ test: all
 	printf '%s  %s\n' 755794118fc2590b4258b92904b2ab3349a2ec0430df6b808976806a98b1d1b7 $(O)/posttrain-values.txt | sha256sum -c -
 	$(PYTHON) $(D)/test_ctl528_vectors.py $(O)/ctl528
 	$(PYTHON) $(D)/test_phy528_vectors.py $(O)/phy528
+	$(O)/train528
+	$(PYTHON) $(D)/test_train528_vectors.py $(O)/train528
 clean:
 	rm -rf $(O)
