@@ -6,6 +6,7 @@ import ctypes as C
 import ctypes.util
 import pathlib
 import sys
+import struct
 
 class Descriptor(C.Structure):
     _fields_ = [
@@ -18,6 +19,22 @@ class Descriptor(C.Structure):
         ("iSerialNumber", C.c_uint8), ("bNumConfigurations", C.c_uint8),
     ]
 
+def packed_payload(container, raw):
+    # Read exactly the bytes selected by RKBoot::GetEntryData for CODE471.
+    if len(container)<102 or container[:4]!=b"BOOT" or container[25]!=1:
+        raise ValueError("expected RKBOOT container with exactly one CODE471")
+    off=struct.unpack_from("<I",container,26)[0]
+    if container[30]!=57 or off<102 or off+57>len(container):
+        raise ValueError("invalid CODE471 entry")
+    start,size=struct.unpack_from("<II",container,off+45)
+    if start<off+57 or not 4<=size<=65536 or start+size>len(container)-4:
+        raise ValueError("invalid CODE471 payload range")
+    payload=container[start:start+size]
+    if not payload.startswith(raw) or any(payload[len(raw):]):
+        raise ValueError("packed CODE471 is not the raw image plus zero padding")
+    print(f"RKBOOT CODE471 offset={start} size={size} padding={size-len(raw)}",flush=True)
+    return payload
+
 def framed(raw):
     if not 4 <= len(raw) <= 65536 or len(raw) % 4:
         raise ValueError("expected raw word-aligned CODE471, 4..65536 bytes")
@@ -27,11 +44,18 @@ def framed(raw):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("image", type=pathlib.Path)
+    p.add_argument("--packed", type=pathlib.Path, help="use exact CODE471 entry from boot_merger output")
     p.add_argument("--timeout-ms", type=int, default=10000)
     a = p.parse_args()
     if not 100 <= a.timeout_ms <= 60000:
         p.error("timeout must be 100..60000 ms")
     raw = a.image.read_bytes()
+    if a.packed:
+        raw = packed_payload(a.packed.read_bytes(),raw)
+    else:
+        size=len(raw)
+        raw += bytes((-size)%2048)
+        print(f"CODE471 2048-byte alignment: {size} -> {len(raw)}",flush=True)
     data = framed(raw)
     name = ctypes.util.find_library("usb-1.0")
     if not name:
