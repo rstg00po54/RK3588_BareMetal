@@ -71,14 +71,18 @@ static void print_status(const uint32_t s[4])
     printf("state=%" PRIu32 " size=%" PRIu32 " received=%" PRIu32
            " CRC32=%08" PRIx32 "\n",s[0],s[1],s[2],s[3]);
 }
-static int api_info(libusb_device_handle *h,uint32_t info[4])
+static int api_info_timeout(libusb_device_handle *h,uint32_t info[4],unsigned timeout)
 {
     unsigned char buf[16];
-    if(!req(h,0xc0,0x58,0,buf,sizeof buf))return 0;
+    if(libusb_control_transfer(h,0xc0,0x58,0,0,buf,sizeof buf,timeout)!=(int)sizeof buf)return 0;
     for(unsigned i=0;i<4;i++)info[i]=get32(buf+4*i);
     return info[0]==2 &&
         ((info[1]==0xff001000U && info[2]==0xff011000U) ||
          (info[1]==0xff011000U && info[2]==0xff001000U));
+}
+static int api_info(libusb_device_handle *h,uint32_t info[4])
+{
+    return api_info_timeout(h,info,TIMEOUT);
 }
 static double monotime(void)
 {
@@ -107,30 +111,41 @@ static libusb_device_handle *open_one(libusb_context *ctx)
     return h;
 }
 static int wait_slot(libusb_context *ctx,uint32_t target,uint8_t bus,
-                     const uint8_t *ports,int depth)
+                     const uint8_t *ports,int depth,double started)
 {
-    /* Do not resend RUN on a timeout. Wait for the new firmware instead. */
-    double deadline=monotime()+20.0;
-    for(unsigned i=0;i<80 && monotime()<deadline;i++){
-        struct timespec delay={0,250000000};
-        nanosleep(&delay,NULL);
+    /* Keep the 20s VMware recovery window, but poll every 50ms and
+     * use short, silent read-only probes while enumeration is in flight.
+     * Never resend RUN or accept the previous slot as success. */
+    double begin=monotime(),deadline=begin+20.0,first=-1,configured=-1;
+    for(unsigned i=0;i<400 && monotime()<deadline;i++){
         libusb_device_handle *h=open_one(ctx);
-        if(!h)continue;
-        libusb_device *dev=libusb_get_device(h);
-        uint8_t path[8];
-        int d=libusb_get_port_numbers(dev,path,sizeof path);
-        int cfg=0;
-        uint32_t info[4];
-        int ok=libusb_get_bus_number(dev)==bus && d==depth &&
-            d>0 && !memcmp(path,ports,(size_t)d) &&
-            !libusb_get_configuration(h,&cfg) && cfg==1 &&
-            ping(h) && api_info(h,info) && info[1]==target;
-        libusb_close(h);
-        if(ok){
-            printf("SRAM USB RUN PASS; active slot=0x%08" PRIx32 "\n",target);
-            return 1;
+        if(h){
+            libusb_device *dev=libusb_get_device(h);
+            uint8_t path[8],pong[8];
+            int d=libusb_get_port_numbers(dev,path,sizeof path);
+            int cfg=0;
+            uint32_t info[4];
+            int same=libusb_get_bus_number(dev)==bus && d==depth &&
+                d>0 && !memcmp(path,ports,(size_t)d);
+            if(same && first<0)first=monotime()-started;
+            int ready=same && !libusb_get_configuration(h,&cfg) && cfg==1;
+            if(ready && configured<0)configured=monotime()-started;
+            int ok=ready && api_info_timeout(h,info,250) && info[1]==target &&
+                libusb_control_transfer(h,0xc0,0x51,0,0,pong,sizeof pong,250)==(int)sizeof pong &&
+                !memcmp(pong,"SRAMUSB1",sizeof pong);
+            libusb_close(h);
+            if(ok){
+                printf("SRAM USB RUN PASS; active slot=0x%08" PRIx32 "\n",target);
+                printf("RUN + USB reconnect: %.3f s (first same-port device %.3f s, configured %.3f s)\n",
+                    monotime()-started,first,configured);
+                return 1;
+            }
         }
+        struct timespec delay={0,50000000};
+        nanosleep(&delay,NULL);
     }
+    fprintf(stderr,"Reconnect elapsed %.3f s; first same-port device %.3f s; configured %.3f s (-1 = not seen)\n",
+        monotime()-started,first,configured);
     fputs("RUN not confirmed: check USB passthrough and UART. Do not resend blindly.\n",stderr);
     return 0;
 }
@@ -241,10 +256,12 @@ int main(int argc,char **argv)
         if(!req(h,0x40,0x56,0,&dummy,0)||!upload(h,n,crc))goto done;
         printf("Starting slot 0x%08" PRIx32 "; waiting for re-enumeration...\n",target);
         fflush(stdout);
+        double started=monotime();
         int ack=req(h,0x40,0x57,0,&dummy,0);
+        printf("RUN request: %.3f s\n",monotime()-started);
         libusb_close(h);h=NULL;
         if(!ack)fputs("RUN acknowledgement uncertain; checking new slot, not retrying\n",stderr);
-        ok=wait_slot(ctx,target,bus,ports,depth);
+        ok=wait_slot(ctx,target,bus,ports,depth,started);
     }
 done:
     if(h)libusb_close(h);
