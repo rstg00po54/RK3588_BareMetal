@@ -41,7 +41,7 @@ static void uart_diag(void){
 }
 static int rx_gpio_available;
 static unsigned gpio_high,gpio_low,gpio_changes,gpio_last;
-static unsigned rx_bytes,rx_errors,rx_windows;
+static unsigned rx_bytes,rx_errors,rx_windows,rx_monitor;
 static void rx_pad_snapshot(void){
     val("[RX] PMU2 mux = ",*(volatile uint32_t *)0xfd5f4000UL);
     val("[RX] BUS mux = ",*(volatile uint32_t *)0xfd5f800cUL);
@@ -146,6 +146,8 @@ static void timer_info(void){
     val("CNTPCT_EL0 = ",SYS(CNTPCT_EL0));
     out(counter_moves()?"[SRAM] COUNTER RUNNING\n":"[SRAM] COUNTER STALLED\n");
 }
+#include "usb_sram.h"
+
 static int rx(void){
     uint64_t start=timer_ok?SYS(CNTPCT_EL0):0;
     /* Absolute loop bound even if the counter stops. */
@@ -168,6 +170,7 @@ static uint32_t crc_byte(uint32_t crc,unsigned c){
     return crc;
 }
 static void load(void){
+    if(usb_owned){out("ERR USB ACTIVE; usb stop first (usbstop)\n");return;}
     uint32_t size,want,crc=0xffffffffU;
     uintptr_t a=alternate();
     loaded=0;
@@ -194,6 +197,7 @@ static void load(void){
     out("OK\n");
 }
 static void run(void){
+    if(usb_owned){out("ERR USB ACTIVE; usbstop first\n");return;}
     if(!loaded){out("ERR NO IMAGE\n");return;}
     uintptr_t a=loaded;loaded=0;
     out("JUMP\n");
@@ -223,32 +227,53 @@ void boot_fatal(uint64_t esr,uint64_t elr,uint64_t far){
     for(;;)__asm__ volatile("wfe");
 }
 static void cmd(const char *s){
-    if(eq(s,"help"))out("help info test uart timer timerinit load run\n");
+    if(eq(s,"help"))out("help info test uart rxmon timer timerinit usb usbstart usbstat usbstop load run\n");
     else if(eq(s,"info"))info();
     else if(eq(s,"test"))test();
     else if(eq(s,"uart"))uart_diag();
     else if(eq(s,"timer"))timer_info();
-    else if(eq(s,"timerinit"))timer_init();
+    else if(eq(s,"timerinit")){
+        if(usb_owned)out("ERR USB ACTIVE; usbstop first\n");
+        else timer_init();
+    }
+    else if(eq(s,"rxmon")){
+        rx_monitor=!rx_monitor;
+        rx_windows=0;
+        out(rx_monitor?"[RX] monitor ON\n":"[RX] monitor OFF\n");
+    }
+    else if(eq(s,"usb"))usb_snapshot4();
+    else if(eq(s,"usbstart"))usbstart4();
+    else if(eq(s,"usbstat"))usbstat4();
+    else if(eq(s,"usbstop"))(void)usb_halt4();
     else if(eq(s,"load"))load();
     else if(eq(s,"run"))run();
     else if(*s)out("Unknown command\n");
 }
 void boot_main(void){
     char line[64];unsigned n=0;
-    out("\n[SRAM] OpenBoot SRAM v0.2.3\n");
+    out("\n[SRAM] OpenBoot SRAM v0.3.0\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
     rx_pad_snapshot();
-    out("[RX] hold U in terminal; automatic monitor enabled\n");
+    out("[RX] sampling retained; reports OFF (rxmon toggles)\n");
     unsigned idle=0;
     for(;;){
         rx_sample();
+        if(live4)poll4();
         if(++idle==500000U){
             idle=0;
             if(rx_windows<12 || rx_bytes || rx_errors || gpio_changes){
                 ++rx_windows;
-                rx_report();
-                out("cc@SRAM:~$ ");
+                if(rx_monitor){
+                    rx_report();
+                    out("cc@SRAM:~$ ");
+                }else{
+                    /* Preserve sampled accesses from the verified baseline,
+                     * but do not print unsolicited reports. */
+                    gpio_high=gpio_low=gpio_changes=rx_bytes=rx_errors=0;
+                    (void)ur(0x0c);(void)ur(0x10);(void)ur(0x14);
+                    (void)ur(0x7c);(void)ur(0x84);
+                }
             }
         }
         unsigned lsr=ur(0x14);
