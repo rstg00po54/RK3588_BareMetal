@@ -19,6 +19,9 @@
 #define R UINT64_C(0xff080000)
 #define P UINT64_C(0xff081000)
 #define T UINT64_C(0xff082000)
+#define H UINT64_C(0xff083000)
+#define CTL UINT64_C(0xf7000000)
+#define CTL_SIZE 0x400000U
 #define STACK UINT64_C(0xff0f0000)
 #define STOP UINT64_C(0xff090000)
 #define SIZE 75320U
@@ -55,6 +58,31 @@ static bool invalid(uc_engine *uc,uc_mem_type type,uint64_t addr,
             " addr=0x%08" PRIx64 " size=%d\n",(int)type,last_pc,addr,size);
     bad=1;return false;
 }
+static void put32(unsigned char *p,uint32_t v)
+{
+    for(unsigned i=0;i<4;i++)p[i]=(unsigned char)(v>>(8*i));
+}
+static void put64(unsigned char *p,uint64_t v)
+{
+    put32(p,(uint32_t)v);put32(p+4,(uint32_t)(v>>32));
+}
+static void ctl_trace(uc_engine *uc,uc_mem_type type,uint64_t addr,
+                      int size,int64_t value,void *user)
+{
+    (void)user;
+    unsigned char old[4];
+    if(size!=4 || (addr&3) ||
+       !check(uc_mem_read(uc,addr,old,4),"synthetic register read")){
+        bad=1;uc_emu_stop(uc);return;
+    }
+    if(type==UC_MEM_WRITE)
+        printf("W pc=%05" PRIx64 " addr=%08" PRIx64
+               " synthetic-old=%08" PRIx32 " value=%08" PRIx32 "\n",
+               last_pc-BASE,addr,le32(old),(uint32_t)value);
+    else
+        printf("R pc=%05" PRIx64 " addr=%08" PRIx64
+               " synthetic-value=%08" PRIx32 "\n",last_pc-BASE,addr,le32(old));
+}
 static int dump(uc_engine *uc,const char *name,uint64_t addr,unsigned n)
 {
     unsigned char b[0x358];
@@ -65,8 +93,9 @@ static int dump(uc_engine *uc,const char *name,uint64_t addr,unsigned n)
 }
 int main(int argc,char **argv)
 {
-    if(argc!=2){
-        fprintf(stderr,"Usage: %s exact-v1.18-ddr.bin\n",argv[0]);return 2;
+    int controller=argc==3 && !strcmp(argv[2],"--ctl");
+    if(argc!=2 && !controller){
+        fprintf(stderr,"Usage: %s exact-v1.18-ddr.bin [--ctl]\n",argv[0]);return 2;
     }
     FILE *f=fopen(argv[1],"rb");
     if(!f){perror(argv[1]);return 1;}
@@ -129,6 +158,42 @@ int main(int argc,char **argv)
            " T+1f0=%" PRIu32 " T+1f4=%" PRIu32 "\n",
            le32(t+0x1e8),le32(t+0x1ec),le32(t+0x1f0),le32(t+0x1f4));
     ok=dump(uc,"R",R,0x358)&&dump(uc,"P",P,0x94)&&dump(uc,"T",T,0x2ac);
+    if(ok && controller){
+        ok=0;
+        /* The selected header supplies H flags in 0x9a78..0x9aa8.
+         * H is deliberately synthetic: only members used by this call
+         * are supplied. Register bank starts all-zero, not a board dump.
+         * Every RMW result is conditional on that synthetic initial state. */
+        unsigned q=0x115d0+4U*blob[0x115da];
+        if(q+0x18>SIZE)goto done;
+        uint32_t w=le32(blob+q+0xc);
+        unsigned char hw[0x108]={0};
+        put64(hw,CTL);
+        put32(hw+0xe8,le32(blob+q+4)>>16);
+        put32(hw+0xec,le32(blob+q+4)&0xffff);
+        put32(hw+0xf0,(w>>26)&1);
+        put32(hw+0xf4,(w>>27)&1);
+        put32(hw+0xf8,((w>>19)^1U)&1);
+        uc_hook ctl;
+        if(!check(uc_mem_write(uc,H,hw,sizeof hw),"synthetic H")||
+           !check(uc_mem_map(uc,CTL,CTL_SIZE,UC_PROT_READ|UC_PROT_WRITE),"synthetic DDRCTL")||
+           !check(uc_hook_add(uc,&ctl,UC_HOOK_MEM_READ|UC_HOOK_MEM_WRITE,
+                              (void *)ctl_trace,NULL,CTL,CTL+CTL_SIZE-1),"controller trace"))
+            goto done;
+        printf("[SYNTHETIC DDRCTL TRACE] H.f0=%" PRIu32 " H.f4=%" PRIu32
+               " H.f8=%" PRIu32 "; all register reads initially zero\n",
+               le32(hw+0xf0),le32(hw+0xf4),le32(hw+0xf8));
+        x[0]=H;x[1]=0;x[2]=R;x[3]=0;x[4]=0;x[5]=0;
+        for(unsigned i=0;i<6;i++)if(!check(uc_reg_write(uc,regs[i],&x[i]),"ctl arg"))goto done;
+        if(!check(uc_reg_write(uc,UC_ARM64_REG_SP,&sp),"ctl SP")||
+           !check(uc_reg_write(uc,UC_ARM64_REG_X30,&lr),"ctl LR"))goto done;
+        err=uc_emu_start(uc,BASE+0x5e38,STOP,5000000,2000000);
+        if(!check(err,"emulate DDRCTL")||bad||
+           !check(uc_reg_read(uc,UC_ARM64_REG_PC,&pc),"ctl PC")||pc!=STOP)
+            goto done;
+        puts("SYNTHETIC DDRCTL TRACE COMPLETE; not a hardware write script");
+        ok=1;
+    }
 done:
     uc_close(uc);
     return ok?0:1;
