@@ -247,3 +247,103 @@ static void ddr_preflight(void){
     }
     out("[DDR PRE] complete; cold initialization NOT attempted\n");
 }
+
+/* First write experiment only: vendor DDR v1.18 file offsets 0xced0..0xcf34.
+ * Mirrors cold_global_handshake in boot/ddr_cold/cold_steps.c, with explicit
+ * step tracing and abort handling. This is not DDR initialization.
+ * The register block's complete semantics are not yet established.
+ */
+static unsigned ddr_handshake_attempted;
+static void ddr_flush(void){
+    for(unsigned i=0;i<1000000U;++i)if(ur(0x14)&0x40)break;
+}
+static void ddr_handshake_write(unsigned off,uint32_t v){
+    uintptr_t a=0xfd8d8000UL+off;
+    usb_val("[DDR HS] write address",a,8);
+    usb_val("[DDR HS] write value",v,8);
+    ddr_flush();
+    *(volatile uint32_t *)a=v;
+    __asm__ volatile("dsb sy" ::: "memory");
+    out("[DDR HS] write complete\n");
+}
+static int ddr_handshake_wait(unsigned off,uint32_t mask,int set){
+    uintptr_t a=0xfd8d8000UL+off;
+    usb_val("[DDR HS] poll address",a,8);
+    usb_val("[DDR HS] mask",mask,8);
+    out(set?"[DDR HS] wait any set\n":"[DDR HS] wait all clear\n");
+    ddr_flush();
+    uint64_t start=SYS(CNTPCT_EL0);
+    uint32_t v=0;
+    for(unsigned i=0;i<1000000U;++i){
+        if(!probe32(a,&v)){out("[DDR HS] read ABORT\n");return 0;}
+        if((!!(v&mask))==set){
+            usb_val("[DDR HS] match",v,8);return 1;
+        }
+        if(SYS(CNTPCT_EL0)-start>=2400000ULL)break;
+    }
+    usb_val("[DDR HS] timeout last",v,8);
+    return 0;
+}
+static int ddr_cold_guard(void){
+    uint32_t v,a,b,c;
+    /* Scratch flags are not proof of cold state. Also require the observed
+     * cold PLL values and handshake signature. Operator must have booted
+     * independent CODE471 without any vendor DDR stage since power-on. */
+    if(!alternate() || SYS(CurrentEL)!=12 || (SYS(SCTLR_EL3)&5) ||
+       !timer_ok || SYS(CNTFRQ_EL0)!=24000000 || !counter_moves())
+        return 0;
+    for(unsigned i=0;i<4;++i){
+        if(!probe32(0xfd58a208UL+4*i,&v) || v)return 0;
+    }
+    for(unsigned ch=0;ch<4;++ch){
+        uintptr_t base=0xfd800000UL+ch*0x4000UL;
+        if(!probe32(base,&v) || v!=0x8073U ||
+           !probe32(base+4,&v) || v!=1U ||
+           !probe32(base+0x20,&v) || v!=0x8073U ||
+           !probe32(base+0x24,&v) || v!=1U)return 0;
+    }
+    if(!probe32(0xfd8d8118UL,&a) || !probe32(0xfd8d8120UL,&b) ||
+       !probe32(0xfd8d8184UL,&c))return 0;
+    return a==0xf023ffffU && b==0x0023ffffU && c==0;
+}
+static void ddr_handshake(void){
+    out("[DDR HS] experimental cold handshake ONLY; no PLL/PHY/CTL programming\n");
+    if(ddr_handshake_attempted){
+        out("[DDR HS] already attempted; cold power cycle before retry\n");return;
+    }
+    if(upload_arm || upload_pending || upload_state==1){
+        out("[DDR HS] upload active; refuse\n");return;
+    }
+    if(!ddr_cold_guard()){
+        out("[DDR HS] cold signature mismatch; refuse writes\n");return;
+    }
+    /* Quiesce our USB DMA before global hardware state changes. */
+    if(!usb_owned){
+        out("[DDR HS] start our USB first to establish controller ownership\n");return;
+    }
+    if(!usb_stop_for_jump4()){
+        out("[DDR HS] cannot halt USB; refuse writes\n");return;
+    }
+    ddr_handshake_attempted=1;
+    ddr_handshake_write(0x110,0xf000f000U);
+    if(!ddr_handshake_wait(0x118,0xf0000000U,1))goto fail;
+    if(!ddr_handshake_wait(0x120,0xf0000000U,1))goto fail;
+    ddr_handshake_write(0x160,0x00030003U);
+    ddr_handshake_write(0x154,0x00030003U);
+    if(!ddr_handshake_wait(0x184,3,1))goto fail;
+    ddr_handshake_write(0x154,0x00030000U);
+    if(!ddr_handshake_wait(0x184,3,0))goto fail;
+    ddr_handshake_write(0x160,0x00030000U);
+    ddr_handshake_write(0x110,0xf0000000U);
+    out("[DDR HS] sequence PASS (DDR NOT initialized)\n");
+    if(!ddr_read("HANDSHAKE_118",0xfd8d8118UL) ||
+       !ddr_read("HANDSHAKE_120",0xfd8d8120UL) ||
+       !ddr_read("HANDSHAKE_184",0xfd8d8184UL))goto fail;
+    if(timer_ok && counter_moves()){
+        out("[DDR HS] restart USB\n");usbstart4();
+    }else out("[DDR HS] counter stalled; USB remains off\n");
+    return;
+fail:
+    out("[DDR HS] STOP: partial hardware state; power cycle before retry\n");
+    /* No guessed rollback and no USB restart in unknown state. */
+}
