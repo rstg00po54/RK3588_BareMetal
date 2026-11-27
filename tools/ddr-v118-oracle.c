@@ -145,7 +145,7 @@ int main(int argc,char **argv)
     }
     puts("OFFLINE GENERATOR RETURN PASS (not DDR hardware initialization)");
     /* Independently decoded 0x7010 geometry, prior to any training. */
-    static const uint32_t geometry[15]={2,11,3,1,0,0,17,17,0,0,0,0,0,0,0};
+    static const uint32_t geometry[15]={2,11,3,1,1,0,17,17,0,0,0,0,0,0,0};
     for(unsigned ch=0;ch<4;++ch)
         for(unsigned i=0;i<15;++i)
             if(le32(r+ch*0x6c+i*4)!=geometry[i]){
