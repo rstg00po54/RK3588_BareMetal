@@ -1,0 +1,45 @@
+/* Fixed 528 MHz LPDDR4X v1.18 controller profile, first geometry and
+ * hypothetical single-rank second pass only. Host-injected IO; not a
+ * complete initialization, not approved for target MMIO. */
+#include "cold_steps.h"
+struct op { uint32_t off,keep,bits; };
+static const struct op profile[]={
+ {0x0000,0,0x19161217},{0x0018,0,9},{0x0600,0,0x82100101},
+ {0x0604,0,0xc9},{0x0b80,0,0x20000},{0x0588,0,0x204},
+ {0x05a4,0xffffe0e0,0x801},{0x05a8,0,0x00500003},
+ {0x0b04,0,0x0b180d07},{0x0b08,0,0x25},{0x0b00,0,0x05417580},
+ {0x0d04,0,0x808},{0x0004,0,0x00070821},{0x0008,0,0x060a1817},
+ {0x0d08,0,0x201f},{0x000c,0,0x000a1c21},{0x0010,0,0x0a08060a},
+ {0x0014,0,0x08070806},{0x0030,0,0x30000},{0x0034,0,0x200004},
+ {0x0038,0,0x001600cd},{0x0064,0,0x41908},{0x0608,0,0x300000},
+ {0x0500,0,0x140009},{0x0504,0,0x300000},{0x0508,0,0},{0x050c,0,0},
+ {0x0580,0,0x07190204},{0x0800,0,0x100210},
+ {0x10280,0xffffffff,0x20000000},{0x10000,0,0x03080002},
+ {0x10200,0,0x136},{0x10288,0,1},{0x10508,0,0x80008000},
+ {0x10c94,0,1},{0x10d00,0,0x20030},{0x10d04,0,0x60000},
+ {0x10380,0xfffffffb,0},{0x10394,0xcfffffff,0},
+ {0x10c90,0xff000fff,0xf000},{0x10184,0xffffffff,1},
+ {0x10500,0xffeefeee,0x100011},{0x1018c,0,0},
+ {0x10510,0xffffffff,4},{0x10104,0,1},{0x10108,0,1},
+ {0x10118,0xfffffffe,0},{0x10518,0xffffffff,1},
+ {0x00804,0xfff00000,0xf0000},{0x100804,0xfff00000,0xf0000},
+ {0x200804,0xfff00000,0xf0000},{0x300804,0xfff00000,0xf0000},
+ {0x10510,0xffffffff,4},
+};
+/* mode=0: initial two-rank probe. mode=1: hypothetical single-rank
+ * width-category-1 second pass. All other P/T/H parameters fixed.
+ * Caller must validate complete preconditions before use. */
+int cold_ctl528_profile(const struct cold_io *io,unsigned ch,unsigned mode)
+{
+    if(!io||!io->read||!io->write||ch>=4||mode>1)return COLD_BAD_ARG;
+    uintptr_t b=0xf7000000UL+ch*0x1000000UL;
+    for(unsigned i=0;i<sizeof profile/sizeof profile[0];i++){
+        struct op p=profile[i];
+        if(mode&&p.off==0x10280)continue;
+        if(mode&&p.off==0x10000)p.bits=0x01080002;
+        uint32_t v=p.bits;
+        if(p.keep)v|=io->read(io->ctx,b+p.off)&p.keep;
+        io->write(io->ctx,b+p.off,v);
+    }
+    return COLD_OK;
+}
