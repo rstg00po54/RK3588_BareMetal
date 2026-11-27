@@ -1,8 +1,9 @@
 # SRAM ABI1 dry-run only: injected mock registers; no physical MMIO.
-# Override AARCH64_* for a GNU cross-toolchain if desired.
-AARCH64_CC ?= clang --target=aarch64-none-elf
-AARCH64_LD ?= ld.lld
-AARCH64_OBJCOPY ?= llvm-objcopy
+# Use the same GNU cross-toolchain as boot/sram-app.mk.
+CROSS_COMPILE ?= aarch64-linux-gnu-
+AARCH64_CC ?= $(CROSS_COMPILE)gcc
+AARCH64_LD ?= $(CROSS_COMPILE)ld
+AARCH64_OBJCOPY ?= $(CROSS_COMPILE)objcopy
 D := boot/ddr_cold
 O := out/sram-ddr-dry
 CFLAGS := -Os -std=c11 -Wall -Wextra -Werror -ffreestanding -fpie -fno-builtin -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -mgeneral-regs-only -mstrict-align -fstack-usage
