@@ -1,13 +1,9 @@
 .section .text.boot,"ax",%progbits
 .global _start
 _start:
+    b entry
+entry:
     msr daifset, #0xf
-    mrs x0, CurrentEL
-    cmp x0, #12
-    b.ne early_fail
-    adr x0, _start
-    tst x0, #0xfff
-    b.ne early_fail
     /* UART2 M0: same verified pinmux as independent CODE471 probe. */
     movz x1, #0x4000
     movk x1, #0xfd5f, lsl #16
@@ -28,18 +24,27 @@ _start:
     str wzr, [x19, #4]
     mov w0, #3
     str w0, [x19, #0xc]
-    str wzr, [x19, #4]
-    mov w0, #7
-    str w0, [x19, #8]
     mov w0, #1
     str w0, [x19, #0x98]
     dsb sy
+    adr x0, mark_entry
+    bl early_puts
+    mrs x0, CurrentEL
+    cmp x0, #12
+    b.ne early_fail
+    adr x0, _start
+    tst x0, #0xfff
+    b.ne early_fail
     msr spsel, #1
     adr x0, __stack_top
     mov sp, x0
+    adr x0, mark_stack
+    bl early_puts
     adr x0, vectors
     msr vbar_el3, x0
     isb
+    adr x0, mark_vectors
+    bl early_puts
     adr x0, __bss_start
     adr x1, __bss_end
 1:
@@ -48,23 +53,50 @@ _start:
     str xzr, [x0], #8
     b 1b
 2:
+    adr x0, mark_bss
+    bl early_puts
+    /* Enable FIFO only after the known-good UART startup sequence. */
+    str wzr, [x19, #4]
+    mov w0, #7
+    str w0, [x19, #8]
+    dsb sy
     bl boot_main
 3:
     wfe
     b 3b
 early_fail:
-    movz x1, #0xfeb5, lsl #16
-    mov w0, #33
-    mov w3, #0x8000
+    adr x0, mark_fail
+    bl early_puts
+    b 3b
+
+/* UART breadcrumbs before C or stack use; identical polling to probe. */
+early_putc:
+    mov w2, #0x8000
 4:
-    ldr w2, [x1, #0x14]
-    tbnz w2, #5, 5f
-    subs w3, w3, #1
+    ldr w1, [x19, #0x14]
+    tbnz w1, #5, 5f
+    subs w2, w2, #1
     b.ne 4b
-    b 3b
+    ret
 5:
-    str w0, [x1]
-    b 3b
+    str w0, [x19]
+    ret
+early_puts:
+    mov x9, x30
+    mov x10, x0
+6:
+    ldrb w0, [x10], #1
+    cbz w0, 7f
+    bl early_putc
+    b 6b
+7:
+    ret x9
+mark_entry: .asciz "\r\n[SRAM] ASM ENTRY\r\n"
+mark_stack: .asciz "[SRAM] STACK SET\r\n"
+mark_vectors: .asciz "[SRAM] VBAR SET\r\n"
+mark_bss: .asciz "[SRAM] BSS CLEARED; entering C\r\n"
+mark_fail: .asciz "[SRAM] ENTRY EL/ALIGN FAIL\r\n"
+.balign 4
 
 /* Return 1 on success; recover only a synchronous data abort at this load. */
 .global probe32
