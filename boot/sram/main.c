@@ -251,7 +251,7 @@ static void cmd(const char *s){
 }
 void boot_main(void){
     char line[64];unsigned n=0;
-    out("\n[SRAM] OpenBoot SRAM v0.3.0\n");
+    out("\n[SRAM] OpenBoot SRAM v0.3.1\n");
     out(bss_test?"[SRAM] BSS FAIL\n":"[SRAM] BSS PASS\n");
     info();test();uart_rx_init();out("[SRAM] READY\ncc@SRAM:~$ ");
     rx_pad_snapshot();
