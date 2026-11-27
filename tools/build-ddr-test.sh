@@ -12,8 +12,8 @@ case "$mode" in
 esac
 payload_version="${2:-v06}"
 case "$payload_version" in
-    v06|v07) ;;
-    *) echo "Expected payload v06 or v07" >&2; exit 2 ;;
+    v06|v07|v08) ;;
+    *) echo "Expected payload v06, v07 or v08" >&2; exit 2 ;;
 esac
 name="ddr-$mode"
 if [[ "$payload_version" != v06 ]]; then
