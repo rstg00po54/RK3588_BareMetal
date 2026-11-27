@@ -25,20 +25,30 @@ static uint32_t upload_crc;
 static unsigned upload_pending,upload_offset,upload_len;
 static unsigned config_reported,usb_trace,remote_enabled=1,remote_run;
 #define SRAM_USB_API 2U
+#include "app_abi.h"
+static unsigned app_state,app_result,app_pending;
+static int app_header_ok(void){
+    if(loaded!=alternate() || !loaded || upload_state!=2 ||
+       upload_size!=upload_done || upload_size<20 || upload_size>SRAM_APP_MAX)return 0;
+    volatile const uint32_t *h=(volatile const uint32_t *)loaded;
+    return h[0]==SRAM_APP_MAGIC && h[1]==SRAM_APP_ABI &&
+           h[2]==SRAM_APP_ENTRY && h[3]==0;
+}
 static uint32_t crc_byte(uint32_t crc,unsigned c);
 static void upload_abort4(void){
     if(upload_arm || upload_state==1 || upload_pending==0x54){
         loaded=0;
         upload_state=0;
     }
-    upload_arm=0;upload_pending=0;remote_run=0;
+    upload_arm=0;upload_pending=0;remote_run=0;app_pending=0;
+    if(app_state==1)app_state=3;
 }
 static int upload_arm4(void){
     if(!live4 || !config4 || !alternate() || (SYS(SCTLR_EL3)&5)){
         out("[UPLOAD] USB not configured or unsafe slot\n");return 0;
     }
     loaded=0;upload_state=0;upload_size=upload_done=0;upload_crc=0;
-    upload_pending=0;upload_arm=1;
+    upload_pending=0;upload_arm=1;app_state=app_result=app_pending=0;
     out("[UPLOAD] armed; host may stage one image\n");return 1;
 }
 static void upload_status4(void){
@@ -200,12 +210,23 @@ static int handle4(void) {
             info[j*4+i]=(unsigned char)(words[j]>>(8*i));
         return reply4(info,sizeof(info),len,0);
     }
+    if(bm==0xc0 && req==0x5a && !v && !idx && len && config4){
+        unsigned char b[16];
+        uint32_t words[4]={SRAM_APP_ABI,app_state,app_result,(uint32_t)(uintptr_t)_start};
+        for(unsigned j=0;j<4;++j)for(unsigned i=0;i<4;++i)
+            b[4*j+i]=(unsigned char)(words[j]>>(8*i));
+        return reply4(b,sizeof b,len,0);
+    }
     if(bm==0x40 && config4 && remote_enabled && !v && !idx && !len){
+        if(req==0x59 && app_state==0 && app_header_ok() && !(SYS(SCTLR_EL3)&5)){
+            upload_pending=0x59;phase4=3;status_ep4=1;three4=0;return 1;
+        }
         if(req==0x56 && upload_arm4()){
             phase4=3;status_ep4=1;three4=0;return 1;
         }
         if(req==0x57 && loaded && loaded==alternate() && upload_state==2 &&
-           upload_size==upload_done && !(SYS(SCTLR_EL3)&5)){
+           upload_size==upload_done && !(SYS(SCTLR_EL3)&5) &&
+           *(volatile const uint32_t *)loaded!=SRAM_APP_MAGIC){
             upload_pending=0x57;phase4=3;status_ep4=1;three4=0;return 1;
         }
     }
@@ -374,7 +395,11 @@ static void poll4(void) {
                         upload_pending=0;remote_run=1;
                         phase4=0;return; /* status ACK completed; no new DMA */
                     }
-                    ok = arm4();
+                    if(upload_pending==0x59){
+                        upload_pending=0;app_state=1;
+                        if(!arm4()){app_state=3;ok=0;}
+                        else{app_pending=1;return;}
+                    }else ok = arm4();
                 }
                 else
                     ok = 0;
